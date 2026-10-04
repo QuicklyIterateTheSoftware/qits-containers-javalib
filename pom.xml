@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- qits-containers-driver: the platform's docker layer as a plain-Java library — the spec
+         types, the embedder-chosen label namespace, the docker argv, the process runner and the
+         driver over them. Cut out of qits-containers-service so that whatever holds a docker socket
+         (CS itself, the workspaces runner, the front-desk runner) embeds the same code rather than
+         calling a service.
+
+         ONE MODULE AT THE ROOT, as in qits-eventstream-javalib: this repo produces one jar, so this
+         pom is the parent and the module at once.
+
+         PLAIN JAVA. No CDI, no Quarkus dependency, no Jackson, no config file. The one runtime
+         dependency is jboss-logging, so the log lines CS writes through this jar stay byte-identical.
+         quarkus-bom is imported in dependencyManagement ONLY, to align jboss-logging and JUnit with
+         the versions CS runs on; nothing from Quarkus itself is on the classpath.
+
+         A CLONE OF THIS REPO ALONE MUST BUILD: `./mvnw verify`, no docker (tests fake the runtime
+         with a script), no platform registry (nothing here comes from it, so there is no
+         <repositories> block). -->
+    <groupId>eu.wohlben.qits</groupId>
+    <artifactId>qits-containers-driver</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+    <name>qits-containers-driver</name>
+
+    <properties>
+        <maven.compiler.release>25</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
+        <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
+        <quarkus.platform.version>3.34.6</quarkus.platform.version>
+
+        <!-- Passed by the maven-library release recipe. Nothing here resolves from the platform
+             registry today, so no <repositories> block reads it; it stays so the recipe's
+             -Dqits.maven.repository.url has the same property to land on as in every other library. -->
+        <qits.maven.repository.url>https://registry.qits.wohlben.eu/artifacts/maven/maven</qits.maven.repository.url>
+
+        <compiler-plugin.version>3.15.0</compiler-plugin.version>
+        <surefire-plugin.version>3.5.4</surefire-plugin.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>${quarkus.platform.artifact-id}</artifactId>
+                <version>${quarkus.platform.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <dependency>
+            <!-- The only runtime dependency, and the reason for it is CS's log lines: they are
+                 written through jboss-logging today and must stay byte-identical. -->
+            <groupId>org.jboss.logging</groupId>
+            <artifactId>jboss-logging</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>${compiler-plugin.version}</version>
+                <configuration>
+                    <parameters>true</parameters>
+                </configuration>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>${surefire-plugin.version}</version>
+            </plugin>
+        </plugins>
+    </build>
+</project>
