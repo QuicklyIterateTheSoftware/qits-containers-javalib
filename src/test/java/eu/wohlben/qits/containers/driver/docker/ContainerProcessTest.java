@@ -4,9 +4,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /**
  * The bounded-output and timeout behaviour of this service's process shell-out — {@code
@@ -99,5 +105,90 @@ public class ContainerProcessTest {
             1024);
     assertTrue(result.timedOut());
     assertTrue(result.output().contains("SAID-THIS-FIRST"), result.output());
+  }
+
+  @Test
+  public void interruptedMidCallForceKillsTheChildAndStillReportsInterrupted(@TempDir Path tmp)
+      throws InterruptedException {
+    // Before the fix, waitFor's InterruptedException was caught and "-1/interrupted" returned
+    // immediately, but the child (declared inside the old try) could not be reached from the catch
+    // and kept sleeping — this proves it is reaped instead.
+    Path marker = tmp.resolve("marker");
+    AtomicReference<ContainerProcess.Result> resultRef = new AtomicReference<>();
+    AtomicBoolean interruptedAfterReturn = new AtomicBoolean();
+    Thread worker =
+        new Thread(
+            () -> {
+              ContainerProcess.Result result =
+                  ContainerProcess.run(
+                      null,
+                      List.of("bash", "-c", "sleep 3; touch " + marker),
+                      Duration.ofSeconds(30),
+                      1024);
+              resultRef.set(result);
+              interruptedAfterReturn.set(Thread.currentThread().isInterrupted());
+            });
+    worker.start();
+    Thread.sleep(500);
+    worker.interrupt();
+    worker.join(TimeUnit.SECONDS.toMillis(15));
+    assertFalse(worker.isAlive(), "the interrupted call must return promptly, not after sleep 3");
+
+    assertInterruptedResultAndNoSurvivingChild(resultRef.get(), interruptedAfterReturn.get(), marker);
+  }
+
+  @Test
+  public void alreadyInterruptedBeforeTheCallForceKillsTheChildAndReportsInterrupted(
+      @TempDir Path tmp) throws InterruptedException {
+    // A thread that was interrupted before ever calling in is the other way the InterruptedException
+    // path is reached: waitFor throws immediately, with no window at all in which to interrupt mid-
+    // call, so this is a distinct case from the one above.
+    Path marker = tmp.resolve("marker-already");
+    AtomicReference<ContainerProcess.Result> resultRef = new AtomicReference<>();
+    AtomicBoolean interruptedAfterReturn = new AtomicBoolean();
+    Thread worker =
+        new Thread(
+            () -> {
+              Thread.currentThread().interrupt();
+              ContainerProcess.Result result =
+                  ContainerProcess.run(
+                      null,
+                      List.of("bash", "-c", "sleep 3; touch " + marker),
+                      Duration.ofSeconds(30),
+                      1024);
+              resultRef.set(result);
+              interruptedAfterReturn.set(Thread.currentThread().isInterrupted());
+            });
+    worker.start();
+    worker.join(TimeUnit.SECONDS.toMillis(15));
+    assertFalse(worker.isAlive(), "an already-interrupted call must return promptly");
+
+    assertInterruptedResultAndNoSurvivingChild(resultRef.get(), interruptedAfterReturn.get(), marker);
+  }
+
+  /** Shared assertions for both interruption tests above. */
+  private static void assertInterruptedResultAndNoSurvivingChild(
+      ContainerProcess.Result result, boolean interruptedFlagAfterReturn, Path marker)
+      throws InterruptedException {
+    assertEquals(-1, result.exitCode());
+    assertTrue(result.output().contains("interrupted"), result.output());
+    assertFalse(result.timedOut());
+    assertTrue(interruptedFlagAfterReturn, "the interrupt flag must still be set after return");
+
+    boolean childSurvives =
+        ProcessHandle.current()
+            .descendants()
+            .anyMatch(
+                handle ->
+                    handle
+                        .info()
+                        .commandLine()
+                        .map(cmd -> cmd.contains(marker.toString()))
+                        .orElse(false));
+    assertFalse(childSurvives, "the sleep/touch child carrying the marker must not survive");
+
+    // The child was killed well before its "sleep 3" would have let it touch the marker.
+    Thread.sleep(TimeUnit.SECONDS.toMillis(4));
+    assertFalse(Files.exists(marker), "a killed child must never have created the marker");
   }
 }

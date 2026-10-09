@@ -15,7 +15,9 @@ import java.util.concurrent.TimeUnit;
  * deliberately its own third copy rather than a shared jar so this repository stays clone-alone.
  * Combined stdout+stderr, drained on a virtual thread; on timeout the process is {@link
  * Process#destroyForcibly() force-killed} and whatever output was captured so far is returned with
- * {@code timedOut=true}.
+ * {@code timedOut=true}. A call that is interrupted — or was already interrupted when it started —
+ * force-kills the child the same way before returning, so a cancelled caller never leaves the
+ * process running behind it.
  *
  * <p><b>What it is used for is the docker CLI and nothing else.</b> The vocabulary is container
  * lifecycle plus the host's own stores — {@code run}, {@code inspect}, {@code logs}, {@code stop},
@@ -111,6 +113,7 @@ public final class ContainerProcess {
    */
   public static Result run(
       Path cwd, List<String> argv, Map<String, String> env, Duration timeout, int maxChars) {
+    Process process = null;
     try {
       ProcessBuilder pb = new ProcessBuilder(argv);
       if (cwd != null) {
@@ -120,12 +123,13 @@ public final class ContainerProcess {
         pb.environment().putAll(env);
       }
       pb.redirectErrorStream(true);
-      Process process = pb.start();
+      process = pb.start();
+      Process started = process;
       Tail tail = new Tail(maxChars);
       Thread reader =
           Thread.startVirtualThread(
               () -> {
-                try (InputStream stream = process.getInputStream()) {
+                try (InputStream stream = started.getInputStream()) {
                   byte[] buffer = new byte[8192];
                   int n;
                   while ((n = stream.read(buffer)) >= 0) {
@@ -144,10 +148,17 @@ public final class ContainerProcess {
       return new Result(
           finished ? process.exitValue() : -1, tail.text(), !finished, tail.truncated());
     } catch (InterruptedException e) {
+      if (process != null) {
+        killAndReap(process);
+      }
       Thread.currentThread().interrupt();
       return new Result(-1, "interrupted", false, false);
     } catch (Exception e) {
       return new Result(-1, String.valueOf(e.getMessage()), false, false);
+    } finally {
+      if (process != null && process.isAlive()) {
+        process.destroyForcibly();
+      }
     }
   }
 
@@ -162,8 +173,10 @@ public final class ContainerProcess {
     if (deadline == null) {
       throw new IllegalArgumentException("A deadline is mandatory");
     }
+    Process process = null;
     try {
-      Process process = new ProcessBuilder(argv).start();
+      process = new ProcessBuilder(argv).start();
+      Process started = process;
       try {
         // Nothing here is interactive; a child waiting on a terminal must see EOF.
         process.getOutputStream().close();
@@ -175,7 +188,7 @@ public final class ContainerProcess {
       Thread outReader =
           Thread.startVirtualThread(
               () -> {
-                try (InputStream stream = process.getInputStream()) {
+                try (InputStream stream = started.getInputStream()) {
                   byte[] buffer = new byte[8192];
                   int n;
                   while ((n = stream.read(buffer)) >= 0) {
@@ -188,7 +201,7 @@ public final class ContainerProcess {
       Thread errReader =
           Thread.startVirtualThread(
               () -> {
-                try (InputStream stream = process.getErrorStream()) {
+                try (InputStream stream = started.getErrorStream()) {
                   byte[] buffer = new byte[8192];
                   int n;
                   while ((n = stream.read(buffer)) >= 0) {
@@ -212,10 +225,41 @@ public final class ContainerProcess {
           head.truncated(),
           !finished);
     } catch (InterruptedException e) {
+      if (process != null) {
+        killAndReap(process);
+      }
       Thread.currentThread().interrupt();
       return new Separated(-1, "", "interrupted", false, false);
     } catch (Exception e) {
       return new Separated(-1, "", String.valueOf(e.getMessage()), false, false);
+    } finally {
+      if (process != null && process.isAlive()) {
+        process.destroyForcibly();
+      }
+    }
+  }
+
+  /**
+   * Force-kills an interrupted call's child and waits up to five seconds total for it to actually
+   * die, so the catch that calls this never hands a live process back to the caller. {@code
+   * waitFor} throws immediately on a thread whose interrupt flag is already set, so this swallows
+   * any further {@link InterruptedException} while it waits — the caller re-asserts the flag once
+   * this returns.
+   */
+  private static void killAndReap(Process process) {
+    process.destroyForcibly();
+    long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    while (true) {
+      long remainingNanos = deadlineNanos - System.nanoTime();
+      if (remainingNanos <= 0) {
+        return;
+      }
+      try {
+        process.waitFor(remainingNanos, TimeUnit.NANOSECONDS);
+        return;
+      } catch (InterruptedException ignored) {
+        // keep waiting out the bound; the caller re-asserts the interrupt flag once we return
+      }
     }
   }
 
