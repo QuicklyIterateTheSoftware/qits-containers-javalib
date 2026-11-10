@@ -3,6 +3,7 @@ package eu.wohlben.qits.containers.driver.spec;
 import java.util.Collections;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.regex.Pattern;
 
 /**
  * Validates every untrusted string that reaches a docker argv — the {@code CiIdentifiers} /
@@ -71,6 +72,44 @@ public final class ContainersIdentifiers {
 
   /** One side of an {@code --add-host} entry: a host name or an address, never punctuation. */
   private static final String HOST_ENTRY = "[A-Za-z0-9][A-Za-z0-9._:-]*";
+
+  /** One decimal octet of an IPv4 literal — 0 to 255, and never a leading zero on a second digit. */
+  private static final String IPV4_OCTET = "(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])";
+
+  /** A whole IPv4 literal: four of {@link #IPV4_OCTET}, dot-separated. */
+  private static final Pattern IPV4_LITERAL =
+      Pattern.compile("^" + IPV4_OCTET + "(\\." + IPV4_OCTET + "){3}$");
+
+  /**
+   * An IPv6 literal: the standard eight-group grammar, spelled out as alternatives for the {@code
+   * ::} compression (which may stand for one or more all-zero groups, and may appear at most once)
+   * and for a trailing dotted IPv4 tail ({@code ::ffff:10.0.0.1}, an IPv4-mapped address a resolver
+   * may legitimately be addressed by). No zone index ({@code %eth0}) — nothing a {@code docker run
+   * --dns} target needs one for.
+   */
+  private static final Pattern IPV6_LITERAL =
+      Pattern.compile(
+          "^("
+              + "([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|"
+              + "([0-9a-fA-F]{1,4}:){1,7}:|"
+              + "([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|"
+              + "([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|"
+              + "([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|"
+              + "([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|"
+              + "([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|"
+              + "[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|"
+              + ":((:[0-9a-fA-F]{1,4}){1,7}|:)|"
+              + "::(ffff(:0{1,4})?:)?"
+              + IPV4_OCTET
+              + "(\\."
+              + IPV4_OCTET
+              + "){3}|"
+              + "([0-9a-fA-F]{1,4}:){1,4}:"
+              + IPV4_OCTET
+              + "(\\."
+              + IPV4_OCTET
+              + "){3}"
+              + ")$");
 
   /**
    * The user a container runs as — a passwd name or a bare uid. Underscores are in because that is
@@ -300,6 +339,29 @@ public final class ContainersIdentifiers {
       throw refuse("add-host target", entry);
     }
     return entry;
+  }
+
+  /**
+   * A resolver address for {@code docker run --dns} — an IPv4 or IPv6 <b>literal</b>, and nothing
+   * wider.
+   *
+   * <p>A hostname is refused rather than resolved. {@code --dns} wants an address docker writes
+   * straight into the container's {@code /etc/resolv.conf}; resolving a name here would mean this
+   * belt doing a lookup of its own, against whatever resolver this process happens to have, at
+   * validation time rather than at the container's own run time — a second, earlier and
+   * differently-configured DNS client for a value that is supposed to configure the container's
+   * first one. So this is a plain shape check, like every other belt in this class, and it is why
+   * {@code InetAddress.getByName} is not used here even on a value that looks like an address:
+   * handed anything that is not already a literal, it falls back to exactly the resolver call this
+   * belt exists to not make.
+   */
+  public static String requireDnsServer(String address) {
+    if (address == null
+        || address.length() > NAME_MAX
+        || !(IPV4_LITERAL.matcher(address).matches() || IPV6_LITERAL.matcher(address).matches())) {
+      throw refuse("dns server", address);
+    }
+    return address;
   }
 
   /**

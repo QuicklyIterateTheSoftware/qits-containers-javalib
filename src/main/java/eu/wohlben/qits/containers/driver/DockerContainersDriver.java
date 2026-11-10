@@ -139,6 +139,34 @@ public class DockerContainersDriver implements ContainersDriver {
       LOG.warnf("docker refused to run %s: %s", name, brief(result.output()));
       return new Started(false, "", result.output());
     }
+    // Every further membership beyond the one `--network` the run itself took: `network connect`
+    // only ever takes a container that already exists, so this can only happen here, after the
+    // run that made it. A membership made this way is recorded against the container rather than
+    // against the run, so it is never redone on a later `start` — see DockerArgv.networkConnect.
+    for (String extraNetwork : spec.extraNetworks()) {
+      OpResult connected =
+          op(
+              "join " + name + " to " + extraNetwork,
+              DockerArgv.networkConnect(runtime, extraNetwork, name),
+              timeout);
+      if (!connected.ok()) {
+        // The run answered, but a container half joined to the networks its spec asked for is not
+        // the container that was asked for — and there is no other "the run worked but something
+        // right after it did not" case in this driver to match against. Leaving it running would
+        // be the one state the adoption rule exists to make impossible: a container docker holds
+        // that nothing asked for in this shape. So the run is unwound rather than kept: remove
+        // what was just started and report the failure as the run's own, the same shape a refused
+        // `docker run` itself already answers with above.
+        OpResult cleanup =
+            op("remove " + name + " after a failed network join", DockerArgv.rm(runtime, name), timeout);
+        if (!cleanup.ok()) {
+          LOG.warnf(
+              "Could not remove %s after a failed network join to %s: %s",
+              name, extraNetwork, brief(cleanup.detail()));
+        }
+        return new Started(false, "", connected.detail());
+      }
+    }
     // A detached run prints the container id and nothing else; the last non-blank line is it even
     // when docker printed a pull's progress above it.
     return new Started(true, lastLine(result.output()), null);

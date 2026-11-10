@@ -117,6 +117,34 @@ public class DockerArgvTest {
   }
 
   @Test
+  public void dnsServersRenderOneFlagPerEntryRightAfterAddHost() {
+    List<String> argv =
+        render(
+            ciStep().dns("8.8.8.8", "2001:4860:4860::8888").build(), LifecyclePolicy.ephemeral(null));
+    int addHost = argv.indexOf("--add-host=host.docker.internal:host-gateway");
+    assertEquals("--dns", argv.get(addHost + 1));
+    assertEquals("8.8.8.8", argv.get(addHost + 2));
+    assertEquals("--dns", argv.get(addHost + 3));
+    assertEquals("2001:4860:4860::8888", argv.get(addHost + 4));
+    assertEquals("--user", argv.get(addHost + 5), "nothing else shifts, dns is the only insertion");
+
+    // Exactly those four elements on top of the dns-less rendering — nothing else moves.
+    List<String> without = render(ciStep().build(), LifecyclePolicy.ephemeral(null));
+    List<String> minusDns = new ArrayList<>(argv);
+    minusDns.subList(addHost + 1, addHost + 5).clear();
+    assertEquals(without, minusDns, "dns must add --dns pairs and change nothing else");
+  }
+
+  @Test
+  public void aSpecWithNoDnsRendersNoDnsFlagAtAll() {
+    // The absence is the claim, as it is for --init, --user and the socket: a spec that named no
+    // resolver must not silently acquire one.
+    assertFalse(
+        render(ciStep().build(), LifecyclePolicy.ephemeral(null)).contains("--dns"),
+        "a spec with no dns entries must render no --dns flag");
+  }
+
+  @Test
   public void theSocketMountIsTheOnlyDifferenceBetweenAskingAndNotAsking() {
     LifecyclePolicy policy = LifecyclePolicy.ephemeral(null);
     List<String> withSocket = render(ciStep().build(), policy);
@@ -642,6 +670,65 @@ public class DockerArgvTest {
         () -> new ContainerSpec.VolumeMount("v", "/work:ro"));
     assertThrows(
         IllegalArgumentException.class, () -> new ContainerSpec.VolumeMount("v", "relative/path"));
+  }
+
+  @Test
+  public void aHostnameIsRefusedAsADnsServerAndLiteralsAreNot() {
+    // No DNS lookup ever happens here: the belt is a shape check, so a hostname is refused rather
+    // than resolved.
+    for (String literal :
+        List.of("8.8.8.8", "1.1.1.1", "::1", "2001:4860:4860::8888", "fe80::1", "::ffff:10.0.0.1")) {
+      assertEquals(literal, ContainersIdentifiers.requireDnsServer(literal));
+    }
+    for (String hostname :
+        List.of("resolver.example.com", "localhost", "dns", "8.8.8.8.", "not-an-address", "")) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> ContainersIdentifiers.requireDnsServer(hostname),
+          "dns server accepted " + hostname);
+    }
+    assertThrows(
+        IllegalArgumentException.class, () -> ContainersIdentifiers.requireDnsServer(null));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> ContainerSpec.builder("img").network("qits-net").dns("resolver.example.com").build());
+  }
+
+  @Test
+  public void anExtraNetworkMayNotRepeatTheNetworkOrAnotherExtraNetwork() {
+    // A repeat of `network` would ask the driver to connect a container to the network its own
+    // `docker run` already put it on; a repeat within extraNetworks would be the same join issued
+    // twice for no membership gained. Both are refused rather than silently deduplicated.
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            ContainerSpec.builder("img")
+                .network("qits-net")
+                .extraNetwork("qits-net")
+                .build());
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            ContainerSpec.builder("img")
+                .network("qits-net")
+                .extraNetwork("qits-build")
+                .extraNetwork("qits-build")
+                .build());
+    // Two distinct extra networks, neither equal to the primary one, build without complaint.
+    ContainerSpec spec =
+        ContainerSpec.builder("img")
+            .network("qits-net")
+            .extraNetwork("qits-build")
+            .extraNetwork("qits-agents")
+            .build();
+    assertEquals(List.of("qits-build", "qits-agents"), spec.extraNetworks());
+  }
+
+  @Test
+  public void networkConnectRendersTheNetworkAndTheContainerName() {
+    assertEquals(
+        List.of("docker", "network", "connect", "qits-build", "qits-ct-x"),
+        DockerArgv.networkConnect("docker", "qits-build", "qits-ct-x"));
   }
 
   // --- the namespace is the embedder's -------------------------------------------------------

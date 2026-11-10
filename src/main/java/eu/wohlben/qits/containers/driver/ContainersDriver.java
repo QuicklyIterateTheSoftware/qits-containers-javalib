@@ -59,6 +59,13 @@ public interface ContainersDriver {
   /**
    * Start the container, detached, under this exact name. The row that names it was written first,
    * so a crash between this call and its answer leaves a container the registry can still find.
+   *
+   * <p>Also joins every one of {@code spec}'s {@code extraNetworks}, each with its own {@code
+   * network connect} right after the run — the one thing {@code docker run} cannot do for more
+   * than the single network it takes. A join that fails unwinds the run: the container is removed
+   * and {@code started} answers false, the same shape a refused run itself already answers with,
+   * because a container half joined to what it was asked for is not the container that was asked
+   * for.
    */
   Started run(
       ContainerSpec spec,

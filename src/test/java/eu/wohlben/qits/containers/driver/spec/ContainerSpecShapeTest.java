@@ -34,7 +34,9 @@ public class ContainerSpecShapeTest {
           "pullPolicy",
           "explicitName",
           "user",
-          "init");
+          "init",
+          "dns",
+          "extraNetworks");
 
   @Test
   public void theComponentsAreFrozenInNameAndOrder() {
@@ -48,6 +50,9 @@ public class ContainerSpecShapeTest {
             + " spec_hash, and a renamed, reordered or added component moves it and recreates every"
             + " container on its next ensure. A new component must be null-elided in CS's"
             + " SpecFingerprint before it may be added here; only then update this list, with CS's"
-            + " golden test green on the release that carries it.");
+            + " golden test green on the release that carries it."
+            + " qits-1991 added dns and extraNetworks at the end — CS's own fingerprint elision"
+            + " and golden test are that release's work, tracked separately, before CS takes this"
+            + " jar.");
   }
 }

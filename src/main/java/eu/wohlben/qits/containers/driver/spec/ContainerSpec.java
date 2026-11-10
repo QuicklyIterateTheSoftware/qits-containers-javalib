@@ -2,9 +2,11 @@ package eu.wohlben.qits.containers.driver.spec;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Everything one container is started with — the whole of what an owner may ask for, and nothing
@@ -23,7 +25,7 @@ import java.util.Map;
  * that omits a field and a caller that sends {@code []} mean the same thing, and every collection
  * here comes back immutable.
  *
- * <p>Use {@link #builder(String)} rather than the canonical constructor: sixteen positional
+ * <p>Use {@link #builder(String)} rather than the canonical constructor: eighteen positional
  * arguments is a call nobody can read, and a mis-ordered pair of them would compile.
  *
  * @param image the reference to run. Loose by design — see {@link
@@ -36,7 +38,8 @@ import java.util.Map;
  * @param extraLabels the owner's own bookkeeping, charset-belted by {@link
  *     ContainersIdentifiers#requireExtraLabelKey}. Keys inside the embedder's {@link LabelNamespace}
  *     are refused by {@link LabelNamespace#requireOwnerLabels}, which the driver applies.
- * @param network the one network {@code docker run} takes. Further memberships are joins later.
+ * @param network the one network {@code docker run} takes. Further memberships are joins later —
+ *     see {@link #extraNetworks}.
  * @param aliases the addresses this container answers to on that network.
  * @param addHosts {@code name:target} entries, the {@code host.docker.internal:host-gateway} shape.
  * @param volumeMounts named volumes belonging to this workload.
@@ -62,6 +65,16 @@ import java.util.Map;
  *     orphan and a JVM or a shell there reaps none of them, so a workspace accumulates zombies for
  *     as long as it lives. Off by default, because a workload that runs one process and exits gains
  *     nothing from a second process to wait for. qits-workspaces runs its containers with it.
+ * @param dns resolver addresses — {@code docker run --dns}, one per entry, in order. Each is
+ *     checked as an IPv4 or IPv6 <b>literal</b> by {@link ContainersIdentifiers#requireDnsServer};
+ *     a hostname is refused rather than resolved, because resolving it here would be this belt
+ *     doing a lookup of its own in place of the container's.
+ * @param extraNetworks further network memberships, beyond {@link #network} — the one {@code
+ *     docker run} itself can take. The driver joins each with its own {@code docker network
+ *     connect} right after a successful run, so a membership here costs one more call than {@link
+ *     #network} does and is NOT retried by {@code docker start}: docker records a connected
+ *     network against the container rather than against the run that made it, so the membership
+ *     survives a stop and a start on its own. May not repeat {@link #network} or another entry.
  */
 public record ContainerSpec(
     String image,
@@ -79,7 +92,9 @@ public record ContainerSpec(
     PullPolicy pullPolicy,
     String explicitName,
     String user,
-    boolean init) {
+    boolean init,
+    List<String> dns,
+    List<String> extraNetworks) {
 
   /** A named volume of this workload's own, and where it lands inside the container. */
   public record VolumeMount(String volumeName, String containerPath) {
@@ -153,10 +168,80 @@ public record ContainerSpec(
     if (!user.isEmpty()) {
       ContainersIdentifiers.requireUser(user);
     }
+    dns = copy(dns);
+    dns.forEach(ContainersIdentifiers::requireDnsServer);
+    extraNetworks = requireExtraNetworks(network, extraNetworks);
+  }
+
+  /**
+   * The constructor every caller built before {@code dns} and {@code extraNetworks} existed,
+   * kept so a positional call with the old sixteen arguments still compiles — qits-containers-
+   * service's {@code SpecFingerprint.withoutEnv} and {@code ContainersWire.toSpec} are both this
+   * shape today. Both new components default to empty, which is the same reading a null on the
+   * wire gets from the canonical constructor below.
+   */
+  public ContainerSpec(
+      String image,
+      List<String> entrypoint,
+      List<String> args,
+      Map<String, String> env,
+      Map<String, String> extraLabels,
+      String network,
+      List<String> aliases,
+      List<String> addHosts,
+      List<VolumeMount> volumeMounts,
+      List<SharedMount> sharedMounts,
+      boolean hostDockerSocket,
+      SecurityPosture security,
+      PullPolicy pullPolicy,
+      String explicitName,
+      String user,
+      boolean init) {
+    this(
+        image,
+        entrypoint,
+        args,
+        env,
+        extraLabels,
+        network,
+        aliases,
+        addHosts,
+        volumeMounts,
+        sharedMounts,
+        hostDockerSocket,
+        security,
+        pullPolicy,
+        explicitName,
+        user,
+        init,
+        List.of(),
+        List.of());
   }
 
   private static <T> List<T> copy(List<T> values) {
     return values == null ? List.of() : List.copyOf(values);
+  }
+
+  /**
+   * {@code extraNetworks}, belted and checked against {@code network} and against itself: a
+   * repeat is refused rather than silently joined twice, because a repeat of {@code network} would
+   * ask the driver to {@code network connect} a container to the network {@code docker run}
+   * already put it on, and a repeat within the list would be the same join issued twice for no
+   * membership gained.
+   */
+  private static List<String> requireExtraNetworks(String network, List<String> extraNetworks) {
+    List<String> checked = copy(extraNetworks);
+    checked.forEach(ContainersIdentifiers::requireNetwork);
+    Set<String> seen = new HashSet<>();
+    for (String extra : checked) {
+      if (extra.equals(network) || !seen.add(extra)) {
+        throw new IllegalArgumentException(
+            "Invalid extra network: '"
+                + extra
+                + "' repeats the primary network or another extra network");
+      }
+    }
+    return checked;
   }
 
   /** Keys are POSIX-shaped; the values beside them are the owner's business and stay untouched. */
@@ -192,6 +277,8 @@ public record ContainerSpec(
     private String explicitName = "";
     private String user = "";
     private boolean init;
+    private final List<String> dns = new ArrayList<>();
+    private final List<String> extraNetworks = new ArrayList<>();
 
     private Builder(String image) {
       this.image = image;
@@ -272,6 +359,24 @@ public record ContainerSpec(
       return this;
     }
 
+    /** One resolver address per call, kept in order — see {@link ContainerSpec#dns}. */
+    public Builder dns(String... values) {
+      dns.addAll(List.of(values));
+      return this;
+    }
+
+    /** The same, from a list already assembled. */
+    public Builder dns(List<String> values) {
+      dns.addAll(values);
+      return this;
+    }
+
+    /** One further network membership — see {@link ContainerSpec#extraNetworks}. */
+    public Builder extraNetwork(String value) {
+      extraNetworks.add(value);
+      return this;
+    }
+
     public ContainerSpec build() {
       return new ContainerSpec(
           image,
@@ -289,7 +394,9 @@ public record ContainerSpec(
           pullPolicy,
           explicitName,
           user,
-          init);
+          init,
+          dns,
+          extraNetworks);
     }
   }
 }

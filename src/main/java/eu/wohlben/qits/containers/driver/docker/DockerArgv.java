@@ -132,6 +132,13 @@ public final class DockerArgv {
     for (String addHost : spec.addHosts()) {
       argv.add("--add-host=" + ContainersIdentifiers.requireAddHost(addHost));
     }
+    // One --dns per resolver, in the spec's own order. Unlike --network-alias and --add-host,
+    // docker writes these straight into /etc/resolv.conf rather than into anything this service
+    // reads back, so there is nothing here to parse later — only the belt on the way in.
+    for (String server : spec.dns()) {
+      argv.add("--dns");
+      argv.add(ContainersIdentifiers.requireDnsServer(server));
+    }
     // Who the first process is, rendered only when the spec named somebody — an unset user means
     // the image's own default, and the two must stay different statements. It is decided HERE
     // because it cannot be decided later: a container run with --cap-drop=ALL has no CAP_SETUID and
@@ -526,6 +533,25 @@ public final class DockerArgv {
   public static List<String> networkInspect(String runtimeBinary, String network) {
     return List.of(
         runtimeBinary, "network", "inspect", ContainersIdentifiers.requireNetwork(network));
+  }
+
+  /**
+   * Join an already-running container onto one further network — {@code docker network connect}.
+   *
+   * <p>Run once per {@link ContainerSpec#extraNetworks} entry, right after the {@link #run} that
+   * created the container: {@code network connect} takes a container that already exists, which a
+   * {@code docker run} argv itself cannot do for more than the one network {@code --network}
+   * names. Docker records the membership against the container rather than against the run, so a
+   * later {@code docker start} needs no matching reconnect — the one thing that would undo this is
+   * a {@code network disconnect} nothing in this service ever issues.
+   */
+  public static List<String> networkConnect(String runtimeBinary, String network, String name) {
+    return List.of(
+        runtimeBinary,
+        "network",
+        "connect",
+        ContainersIdentifiers.requireNetwork(network),
+        ContainersIdentifiers.requireContainerName(name));
   }
 
   // --- garbage collection -------------------------------------------------------------------

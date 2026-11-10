@@ -55,7 +55,7 @@ your namespace: `ns.requireOwnerLabels(extra)` refuses them, and the driver appl
 
 ## `ContainerSpec` is frozen
 
-`ContainerSpec` has sixteen components, in a fixed order with fixed names, and that is enforced by
+`ContainerSpec` has eighteen components, in a fixed order with fixed names, and that is enforced by
 `ContainerSpecShapeTest`. The reason lives in CS: its `spec_hash` is a SHA-256 over the JSON of
 the whole spec, and it is the identity of every running workspace, agent and refinement container.
 A changed hash recreates the container on its next ensure.
