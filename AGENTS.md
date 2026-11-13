@@ -26,6 +26,9 @@ the jar.
   CS's `LabelNamespace`, passed in like anybody else's.
 - **Belts keep their wording.** Refusal messages reach CS's HTTP answers and logs; changing one is a
   behaviour change for CS.
+- **`SwarmArgv`'s flag order is qits-deployments-service's.** `SwarmArgvTest` copies its expected
+  argvs from that service; reordering a flag is a changed command on every deployment it issues.
+  `SwarmIdentifiers` belts may never be narrower than what that service renders today.
 - **Packages stay under `eu.wohlben.qits.containers.driver`.** No split package with CS.
 - **Tests are plain JUnit 5 and need no docker.**
 

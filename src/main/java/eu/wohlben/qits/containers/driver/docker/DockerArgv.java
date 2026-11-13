@@ -465,6 +465,14 @@ public final class DockerArgv {
   }
 
   /**
+   * Block until the container exits and print its exit code — {@code docker wait}. The caller's
+   * timeout is the only bound; a container that never exits is the caller's to remove.
+   */
+  public static List<String> wait(String runtimeBinary, String name) {
+    return List.of(runtimeBinary, "wait", ContainersIdentifiers.requireContainerName(name));
+  }
+
+  /**
    * Container ids matching every one of the label filters.
    *
    * <p>This narrows a listing; it never decides a removal. Which containers may be touched is a
@@ -511,6 +519,24 @@ public final class DockerArgv {
       argv.add("label=" + filter.getKey() + "=" + filter.getValue());
     }
     return List.copyOf(argv);
+  }
+
+  /**
+   * Whether one named volume exists: {@code volume ls -q --filter name=^<name>$}.
+   *
+   * <p>A list rather than {@code volume inspect}, because the list keeps the exit code for the
+   * daemon's own trouble: exit zero is an answer, and the name on a line of its own is "present".
+   * docker's {@code name} filter is a substring/regex match, so the caller still checks for the exact
+   * line — the anchors only keep the output short.
+   */
+  public static List<String> volumeLsByName(String runtimeBinary, String name) {
+    return List.of(
+        runtimeBinary,
+        "volume",
+        "ls",
+        "-q",
+        "--filter",
+        "name=^" + ContainersIdentifiers.requireVolumeName(name) + "$");
   }
 
   /** A volume's labels, one per line — see {@link #VOLUME_LABELS_FORMAT}. */

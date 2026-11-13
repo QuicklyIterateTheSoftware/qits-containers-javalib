@@ -27,7 +27,8 @@ no split package with it.
 | | |
 |---|---|
 | `.spec` | `ContainerSpec` (with `VolumeMount`, `SharedMount`, `SecurityPosture`, `PullPolicy`, `Builder`), `LifecyclePolicy`, `VolumeSpec`, `ContainersIdentifiers` (the charset belts), `LabelNamespace` |
-| `.docker` | `DockerArgv`, `ContainerProcess` |
+| `.docker` | `DockerArgv`, `SwarmArgv`, `ContainerProcess` |
+| `.swarm` | `ServiceSpec` (with `NetworkAttachment`, `Mount`, `Publish`, `Health`, `UpdatePolicy`, `Builder`), `ServiceUpdate`, `SwarmIdentifiers` (the swarm belts) |
 | root | `ContainersDriver` and its records, `DockerContainersDriver`, `DockerSocketGroup`, `ContainersTimeouts` |
 | `.gc` | `ImageKeepRules`, `VolumeClassifier` — pure GC decisions over driver answers |
 
@@ -65,6 +66,37 @@ A changed hash recreates the container on its next ensure.
 hash and the persisted JSON with literals. A new component serialises as `null` and moves every
 hash, so it may be added only after CS's fingerprint elides it when null — and the golden test must
 stay green on every release of this jar. Renaming or reordering a component is never a refactor.
+
+## Swarm services
+
+`SwarmArgv` renders the `docker service` family — create, update (with a `ServiceUpdate` delta for
+`--env-rm`, `--network-rm`/`--network-add` and `--dns-rm`/`--dns-add`), scale, forced restart,
+inspect, ps, logs, ls, rm — plus the overlay networks services live on and the task-container reads
+beside them. `DockerArgv` gained `wait` and `volumeLsByName` for the same embedder.
+
+    ServiceSpec spec = ServiceSpec.builder("dev-qits-gateway", image)
+        .noResolveImage(true).network("qits-net").restartCondition("any").init(true)
+        .labels(labels).health(cmd, Duration.ofSeconds(3), 3, Duration.ofSeconds(60))
+        .updatePolicy(new ServiceSpec.UpdatePolicy("start-first", "start-first",
+            Duration.ofSeconds(60), "rollback", Duration.ofSeconds(30)))
+        .env(env).build();
+    SwarmArgv.serviceCreate("docker", spec);
+
+- **Values arrive computed.** Labels, environment, health command and mounts are the embedder's;
+  `ServiceSpec` holds them and decides only their order. Labels are passed through exactly as given
+  — no `LabelNamespace` applies to a service.
+- **The flag order is qits-deployments-service's**, which hand-built these argvs: `SwarmArgvTest`
+  pins it element for element, so that service moves onto the jar without changing a command.
+- **Two env lists.** `env` is the embedder's own; `envOverrides` is rendered last on a create and
+  right after `env` on an update, so configuration outranks the default either way.
+- **Belts** (`SwarmIdentifiers`) are lifted from that service's own last-line checks and are never
+  narrower: mount source/target of a declared volume (`Mount.volume`), the health command,
+  capability and sysctl charsets (the allowlists stay the embedder's policy), groups, aliases, ports
+  and the closed vocabularies. Service, task, network and container references, labels, environment
+  strings and resolvers are refused only when null — they are read off the daemon or configuration,
+  and docker's own "no such service" is the answer callers handle.
+- **Templates and filters are the caller's**: every `--format` is a parameter; `labelFilter` spells
+  `label=<k>[=<v>]`.
 
 ## Building
 

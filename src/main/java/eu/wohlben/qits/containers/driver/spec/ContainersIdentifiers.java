@@ -426,8 +426,10 @@ public final class ContainersIdentifiers {
    * A hostile value, rendered for a log line: control characters replaced, length capped. A newline
    * left in would let a refused value forge a second log entry, and an unbounded echo would let it
    * choose how much of the log it occupies.
+   *
+   * <p>Public so the swarm belts ({@code SwarmIdentifiers}) echo a refused value the same way.
    */
-  static String safely(String value) {
+  public static String safely(String value) {
     if (value == null) {
       return "(null)";
     }

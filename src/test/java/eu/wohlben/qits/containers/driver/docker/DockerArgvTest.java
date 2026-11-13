@@ -841,4 +841,31 @@ public class DockerArgvTest {
         DockerArgv.inspectBuildkitdStamp("docker", RUNNER, "qits-buildkitd"));
     assertEquals("qits.containers.buildkit.config", DockerArgv.buildkitdStampLabel(NS));
   }
+
+  @Test
+  public void waitIsTheBareCommandOnABeltedName() {
+    // qits-deployments-service's DockerDatabaseContainers, byte for byte: `docker wait <name>`.
+    assertEquals(
+        List.of("docker", "wait", "qits-pd-db-migrate-0123abcd"),
+        DockerArgv.wait("docker", "qits-pd-db-migrate-0123abcd"));
+    assertThrows(IllegalArgumentException.class, () -> DockerArgv.wait("docker", "-rm"));
+    assertThrows(IllegalArgumentException.class, () -> DockerArgv.wait("docker", null));
+  }
+
+  @Test
+  public void volumeLsByNameAnchorsTheName() {
+    // SwarmDeploymentDriverTest's literal, element for element.
+    assertEquals(
+        List.of("docker", "volume", "ls", "-q", "--filter", "name=^qits-edge-letsencrypt$"),
+        DockerArgv.volumeLsByName("docker", "qits-edge-letsencrypt"));
+    assertEquals(
+        List.of("docker", "volume", "ls", "-q", "--filter", "name=^qits_shared_m2$"),
+        DockerArgv.volumeLsByName("docker", "qits_shared_m2"));
+    for (String hostile : new String[] {null, "", "-x", "a,b", "a b", "a$"}) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> DockerArgv.volumeLsByName("docker", hostile),
+          String.valueOf(hostile));
+    }
+  }
 }
