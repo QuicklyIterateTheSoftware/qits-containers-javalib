@@ -32,9 +32,11 @@ public final class ExecArgv {
   /**
    * {@code exec <reference> <command...>}. Belted: the reference ({@link
    * ContainersIdentifiers#requireReference}, docker's name charset — the relay passes a name it
-   * derived); the command is refused when empty, when any element carries a control character, and
-   * when its first element is empty or opens with {@code -}, which docker would read as an option
-   * of the exec rather than the program to run. The rest of the command is the caller's, verbatim.
+   * derived); the command is refused when empty, when an element is null or carries a NUL, which
+   * no argv can hold, and when its first element is empty, carries a control character or opens
+   * with {@code -}, which docker would read as an option of the exec rather than the program to
+   * run. The arguments after it are the caller's, verbatim: no shell reads them, so a multi-line
+   * {@code sh -c} script passes as the relay always passed it.
    */
   public static List<String> exec(String runtimeBinary, String reference, List<String> command) {
     if (command == null || command.isEmpty()) {
@@ -43,10 +45,16 @@ public final class ExecArgv {
     List<String> argv = new ArrayList<>(List.of(runtimeBinary, "exec"));
     argv.add(ContainersIdentifiers.requireReference(reference));
     for (String element : command) {
-      argv.add(HostArgvBelts.requireNoControl("exec argument", element));
+      if (element == null || element.indexOf('\u0000') >= 0) {
+        throw HostArgvBelts.refuse("exec argument", element);
+      }
+      argv.add(element);
     }
-    if (command.getFirst().isEmpty() || command.getFirst().startsWith("-")) {
-      throw HostArgvBelts.refuse("exec command", command.getFirst());
+    String program = command.getFirst();
+    if (program.isEmpty()
+        || program.startsWith("-")
+        || program.chars().anyMatch(Character::isISOControl)) {
+      throw HostArgvBelts.refuse("exec command", program);
     }
     return List.copyOf(argv);
   }

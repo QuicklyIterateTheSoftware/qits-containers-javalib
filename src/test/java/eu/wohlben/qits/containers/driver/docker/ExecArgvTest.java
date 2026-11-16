@@ -58,13 +58,19 @@ public class ExecArgvTest {
   }
 
   @Test
-  public void noElementCarriesAControlCharacter() {
-    refused(
-        "Invalid exec argument", () -> ExecArgv.exec("docker", LEASE, List.of("sh", "-c", "a\nb")));
+  public void noElementCarriesANulAndTheProgramNoControlCharacter() {
     refused("Invalid exec argument", () -> ExecArgv.exec("docker", LEASE, List.of("a\u0000")));
+    refused("Invalid exec command", () -> ExecArgv.exec("docker", LEASE, List.of("s\th")));
     refused(
         "Invalid exec argument",
         () -> ExecArgv.exec("docker", LEASE, Arrays.asList("sh", null)));
+  }
+
+  @Test
+  public void aMultiLineScriptPassesVerbatim() {
+    assertEquals(
+        List.of("docker", "exec", LEASE, "sh", "-c", "set -e\n\tls /\n"),
+        ExecArgv.exec("docker", LEASE, List.of("sh", "-c", "set -e\n\tls /\n")));
   }
 
   @Test
