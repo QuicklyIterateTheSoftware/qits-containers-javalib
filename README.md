@@ -153,6 +153,9 @@ tests are where the expectations in `DockerArgvTest`, `SwarmArgvTest`, `ComposeA
   binary that cannot start is exit 127 with `cannot start <argv0>: <reason>` as a line, and an
   interrupt kills and reaps exactly as `run` does (qits-894). Nothing is kept, so nothing needs a
   bound; `output` carries only that diagnosis or `interrupted`.
+- **`ContainerProcess.runSeparate`** also takes an environment to add and stdin text to feed, the
+  same way `stream` does (qits-2213: the qits CLI's `network-access` runs on it). A binary that
+  cannot start answers exit 127, the reason in `stderrTail`, the same wording as `stream`'s line.
 
 ## Building
 

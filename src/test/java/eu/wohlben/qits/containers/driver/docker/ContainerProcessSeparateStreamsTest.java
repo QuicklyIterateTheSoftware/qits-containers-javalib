@@ -11,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -100,6 +101,47 @@ class ContainerProcessSeparateStreamsTest {
   }
 
   @Test
+  void theEnvironmentIsAddedToTheChilds() {
+    ContainerProcess.Separated result =
+        ContainerProcess.runSeparate(
+            List.of("bash", "-c", "echo \"$QITS_TOKEN_NAME\""),
+            Map.of("QITS_TOKEN_NAME", "set"),
+            null,
+            Duration.ofSeconds(10),
+            ContainerProcess.STDOUT_CAP);
+
+    assertEquals(0, result.exitCode());
+    assertEquals("set\n", result.stdout());
+  }
+
+  @Test
+  void stdinTextReachesTheChildAndComesBackOnStdoutAloneNotStderr() {
+    ContainerProcess.Separated result =
+        ContainerProcess.runSeparate(
+            List.of("bash", "-c", "echo err >&2; cat"),
+            null,
+            "line-one\nline-two\n",
+            Duration.ofSeconds(10),
+            ContainerProcess.STDOUT_CAP);
+
+    assertEquals(0, result.exitCode());
+    assertEquals("line-one\nline-two\n", result.stdout());
+    assertTrue(result.stderrTail().contains("err"));
+    assertFalse(result.stderrTail().contains("line-"), "stdin's echo must not land on stderr");
+  }
+
+  @Test
+  void noStdinIsAnImmediateEndOfInput() {
+    ContainerProcess.Separated result =
+        ContainerProcess.runSeparate(
+            List.of("cat"), null, null, Duration.ofSeconds(10), ContainerProcess.STDOUT_CAP);
+
+    assertEquals(0, result.exitCode());
+    assertEquals("", result.stdout());
+    assertFalse(result.timedOut());
+  }
+
+  @Test
   void theDeadlineForceKillsAndReportsTimedOut() {
     long started = System.nanoTime();
     ContainerProcess.Separated result =
@@ -122,13 +164,13 @@ class ContainerProcessSeparateStreamsTest {
   }
 
   @Test
-  void aBinaryThatIsNotThereIsAnExitOfMinusOneWithTheReasonOnStderr() {
+  void aBinaryThatIsNotThereIsAnExitOf127WithTheReasonOnStderr() {
     ContainerProcess.Separated result =
         ContainerProcess.runSeparate(
             List.of("/no/such/docker"), Duration.ofSeconds(5), ContainerProcess.STDOUT_CAP);
-    assertEquals(-1, result.exitCode());
+    assertEquals(127, result.exitCode());
     assertEquals("", result.stdout());
-    assertFalse(result.stderrTail().isEmpty());
+    assertTrue(result.stderrTail().contains("cannot start"), result.stderrTail());
   }
 
   @Test

@@ -76,7 +76,10 @@ import java.util.function.Consumer;
  * cap ({@link #STDOUT_CAP} is the default a caller passes) and marked {@code stdoutTruncated} past
  * it rather than cut silently; stderr keeps the merged entry's bounded tail, because docker's
  * diagnosis is a line. Both pipes are drained concurrently to their end whatever is kept, so a child
- * never blocks on a full pipe, and the deadline is mandatory and force-kills exactly as above.
+ * never blocks on a full pipe, and the deadline is mandatory and force-kills exactly as above. It
+ * also takes an environment and stdin text (qits-2213, for the qits CLI's {@code network-access}),
+ * added to and fed exactly as {@link #stream} does it; a binary that cannot be started is exit 127,
+ * worded the same way.
  *
  * <p><b>The fourth entry point, {@link #stream}, keeps nothing at all</b>, and that is how it
  * honours the bound rather than an exception to it: each line of the merged output is handed to the
@@ -108,9 +111,9 @@ public final class ContainerProcess {
   public static final int STDERR_TAIL_CHARS = 8192;
 
   /**
-   * Exit code ({@code -1} when the deadline killed it or it never ran), stdout from its head and
-   * whole up to the cap, stderr's bounded tail, whether stdout went past the cap, and whether the
-   * deadline expired.
+   * Exit code ({@code -1} when the deadline killed it or it was interrupted, {@code 127} when it
+   * could not start), stdout from its head and whole up to the cap, stderr's bounded tail, whether
+   * stdout went past the cap, and whether the deadline expired.
    */
   public record Separated(
       int exitCode,
@@ -320,19 +323,42 @@ public final class ContainerProcess {
    * @param stdoutCapBytes how many bytes of stdout are kept, from the head ({@link #STDOUT_CAP})
    */
   public static Separated runSeparate(List<String> argv, Duration deadline, int stdoutCapBytes) {
+    return runSeparate(argv, null, null, deadline, stdoutCapBytes);
+  }
+
+  /**
+   * The same run, with an environment added to the child's and stdin text fed to it.
+   *
+   * @param argv the command, already assembled element by element — never a shell string
+   * @param env variables to ADD to this process's own environment, or null; never a replacement
+   * @param stdin text written to the child's stdin on its own thread, UTF-8, then closed — or null
+   *     to close stdin at once, so a child waiting on input sees EOF
+   * @param deadline the hard deadline; mandatory, past it the process is force-killed
+   * @param stdoutCapBytes how many bytes of stdout are kept, from the head ({@link #STDOUT_CAP})
+   */
+  public static Separated runSeparate(
+      List<String> argv,
+      Map<String, String> env,
+      String stdin,
+      Duration deadline,
+      int stdoutCapBytes) {
     if (deadline == null) {
       throw new IllegalArgumentException("A deadline is mandatory");
     }
-    Process process = null;
+    ProcessBuilder pb = new ProcessBuilder(argv);
+    if (env != null && !env.isEmpty()) {
+      pb.environment().putAll(env);
+    }
+    Process process;
     try {
-      process = new ProcessBuilder(argv).start();
+      process = pb.start();
+    } catch (IOException e) {
+      String message = "cannot start " + argv.getFirst() + ": " + e.getMessage();
+      return new Separated(127, "", message, false, false);
+    }
+    try {
+      feed(process, stdin);
       Process started = process;
-      try {
-        // Nothing here is interactive; a child waiting on a terminal must see EOF.
-        process.getOutputStream().close();
-      } catch (IOException ignored) {
-        // already closed is as good as closed
-      }
       Head head = new Head(stdoutCapBytes);
       Tail tail = new Tail(STDERR_TAIL_CHARS);
       Thread outReader =
@@ -375,15 +401,11 @@ public final class ContainerProcess {
           head.truncated(),
           !finished);
     } catch (InterruptedException e) {
-      if (process != null) {
-        killAndReap(process);
-      }
+      killAndReap(process);
       Thread.currentThread().interrupt();
       return new Separated(-1, "", "interrupted", false, false);
-    } catch (Exception e) {
-      return new Separated(-1, "", String.valueOf(e.getMessage()), false, false);
     } finally {
-      if (process != null && process.isAlive()) {
+      if (process.isAlive()) {
         process.destroyForcibly();
       }
     }
