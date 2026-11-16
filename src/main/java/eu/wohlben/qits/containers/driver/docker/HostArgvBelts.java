@@ -28,6 +28,7 @@ final class HostArgvBelts {
   private static final Pattern RESTART = Pattern.compile("no|always|unless-stopped|on-failure(:[0-9]+)?");
   private static final Pattern PUBLISH = Pattern.compile("[0-9A-Za-z\\[][0-9A-Za-z.:\\[\\]/-]*");
   private static final Pattern USER = Pattern.compile("[a-z0-9_][a-z0-9_-]*(:[a-z0-9_][a-z0-9_-]*)?");
+  private static final Pattern OPTION_KEY = Pattern.compile("[a-zA-Z0-9][a-zA-Z0-9._-]*");
   private static final Pattern MOUNT_MODE = Pattern.compile("[a-z][a-z,]*");
 
   private HostArgvBelts() {}
@@ -76,6 +77,30 @@ final class HostArgvBelts {
       throw refuse(what, value);
     }
     return value;
+  }
+
+  /**
+   * A value handed to an option verbatim and parsed by docker — a {@code --since} — that is not one
+   * word by shape: not empty, no control character, no leading {@code -}, so it stays the option's
+   * value and one element.
+   */
+  static String requireValue(String what, String value) {
+    if (value == null
+        || value.isEmpty()
+        || value.length() > WORD_MAX
+        || value.startsWith("-")
+        || value.chars().anyMatch(Character::isISOControl)) {
+      throw refuse(what, value);
+    }
+    return value;
+  }
+
+  /**
+   * The key of a {@code key=value} option — a network {@code --opt}: dotted segments, the label-key
+   * charset, so neither the {@code =} that splits the element nor a leading {@code -} can be in it.
+   */
+  static String requireOptionKey(String what, String key) {
+    return matching(what, key, OPTION_KEY);
   }
 
   /** A value with no control character — a label value; the newline is what would forge a line. */

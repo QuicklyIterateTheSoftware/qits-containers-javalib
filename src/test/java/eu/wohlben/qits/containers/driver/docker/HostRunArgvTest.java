@@ -530,6 +530,77 @@ public class HostRunArgvTest {
             "docker", HostRunSpec.created("qits/platform-access-binary:1").args("/qits").build()));
   }
 
+  // --- qits-system-runner-daemon (qits-2289) -----------------------------------------------------
+
+  private static final String SR_BOOTSTRAP =
+      """
+      set -e
+      mkdir -p /etc/buildkit
+      printf '%s' "$BUILDKITD_TOML" > /etc/buildkit/buildkitd.toml
+      exec buildkitd --addr unix:///run/buildkit/buildkitd.sock --addr tcp://0.0.0.0:1234
+      """;
+
+  /** The runner's build-plane builder, through the library: {@code DNS} options in call order. */
+  private static HostRunSpec runnerBuilder(List<String> dns) {
+    HostRunSpec.Builder spec =
+        HostRunSpec.detached("qits-system-runner-buildkitd-r1", BUILDKIT)
+            .network("qits-system-runner-build-r1");
+    dns.forEach(spec::dns);
+    return spec.label("qits.system.runner.buildkitd", "0123456789abcdef")
+        .privileged()
+        .restart("unless-stopped")
+        .volume("qits-system-runner-buildkitd-state-r1:/var/lib/buildkit")
+        .env("BUILDKITD_TOML", "[worker.oci]\n  gc = true\n")
+        .entrypoint("/bin/sh")
+        .args("-c", SR_BOOTSTRAP)
+        .build();
+  }
+
+  /**
+   * {@code BuildPlane.runArgv} :679-704 and {@code BuildPlaneTest
+   * .theTunnelsResolversAreOneDnsEachRightAfterTheNetworkAndMoveTheStamp}: one {@code --dns} per
+   * resolver right after {@code --network}, then the rest of today's list, byte for byte.
+   */
+  @Test
+  public void theSystemRunnersBuilderIsItsRunArgvElementForElement() {
+    List<String> tail =
+        List.of(
+            "--label", "qits.system.runner.buildkitd=0123456789abcdef",
+            "--privileged",
+            "--restart", "unless-stopped",
+            "-v", "qits-system-runner-buildkitd-state-r1:/var/lib/buildkit",
+            "-e", "BUILDKITD_TOML=[worker.oci]\n  gc = true\n",
+            "--entrypoint", "/bin/sh",
+            BUILDKIT,
+            "-c", SR_BOOTSTRAP);
+    List<String> head =
+        List.of(
+            "docker", "run", "-d", "--name", "qits-system-runner-buildkitd-r1",
+            "--network", "qits-system-runner-build-r1");
+
+    List<String> tunnelled = new ArrayList<>(head);
+    tunnelled.addAll(List.of("--dns", "100.96.0.1", "--dns", "192.168.188.1"));
+    tunnelled.addAll(tail);
+    assertEquals(
+        tunnelled,
+        HostRunArgv.render("docker", runnerBuilder(List.of("100.96.0.1", "192.168.188.1"))));
+
+    List<String> untunnelled = new ArrayList<>(head);
+    untunnelled.addAll(tail);
+    assertEquals(untunnelled, HostRunArgv.render("docker", runnerBuilder(List.of())));
+  }
+
+  @Test
+  public void aDnsOptionIsAnIpLiteralAndNothingWider() {
+    assertEquals(
+        List.of("docker", "run", "--rm", "--dns", "fd00::1", "alpine"),
+        HostRunArgv.render("docker", HostRunSpec.removed("alpine").dns("fd00::1").build()));
+    refused(HostRunSpec.removed("alpine").dns("resolver.local").build(), "Invalid dns server");
+    refused(HostRunSpec.removed("alpine").dns("--privileged").build(), "Invalid dns server");
+    refused(HostRunSpec.removed("alpine").dns("1.1.1.1 ").build(), "Invalid dns server");
+    refused(HostRunSpec.removed("alpine").dns(null).build(), "Invalid dns server");
+  }
+
   // --- belts ------------------------------------------------------------------------------------
 
   @Test

@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.SequencedMap;
 import java.util.TreeMap;
 
 /**
@@ -37,6 +38,12 @@ import java.util.TreeMap;
  * {@link HostRunArgv}: an embedder's one-shot helpers and its attached payload run ({@code run
  * --rm}), whose teardown is docker's {@code --rm} (qits-2212). Neither is named by a registry row,
  * and nothing here adopts them; a third exception is a decision, not a refactor.
+ *
+ * <p><b>Nor is there a general {@code exec} here</b>: the only ones are {@link #buildctlPrune} and
+ * {@link #buildctlDu}, whose container and command are constants. {@code exec} of a caller's
+ * command has two sanctioned exceptions, both outside this class: {@link InteractiveArgv}'s {@code
+ * exec -it} for a terminal session (qits-2211), and {@link ExecArgv}'s plain {@code exec}, used only
+ * by the system runner's DOCKER exec relay (owner rule 2026-11-13, qits-2289).
  *
  * <p><b>qits-bootstrap-cli's commands</b> (qits-2212) are here too, element for element as that
  * program renders them, short {@code -f} spellings included: {@link #inspect}, {@link
@@ -128,14 +135,65 @@ public final class DockerArgv {
       Map<String, String> labels,
       LifecyclePolicy policy,
       String socketGroup) {
+    return render(
+        List.of("run", "-d"), runtimeBinary, namespace, name, spec, labels, policy, socketGroup);
+  }
+
+  /**
+   * {@link #run(String, LabelNamespace, String, ContainerSpec, Map, LifecyclePolicy)} as a {@code
+   * docker create}: the same container, every flag in the same order, made and not started — so
+   * the caller can {@link #networkConnect} it onto further networks before its first process runs,
+   * and then {@link #start} it. qits-system-runner-daemon's lease launch (qits-2289), which spelled
+   * this by rewriting the run argv's {@code run -d} into {@code create}; this is that list, element
+   * for element. Never self-removing, as every argv here.
+   */
+  public static List<String> create(
+      String runtimeBinary,
+      LabelNamespace namespace,
+      String name,
+      ContainerSpec spec,
+      Map<String, String> labels,
+      LifecyclePolicy policy) {
+    return create(runtimeBinary, namespace, name, spec, labels, policy, "");
+  }
+
+  /**
+   * {@link #create(String, LabelNamespace, String, ContainerSpec, Map, LifecyclePolicy)}, told
+   * which group owns the host's docker socket — exactly as the seven-argument {@link #run}.
+   */
+  public static List<String> create(
+      String runtimeBinary,
+      LabelNamespace namespace,
+      String name,
+      ContainerSpec spec,
+      Map<String, String> labels,
+      LifecyclePolicy policy,
+      String socketGroup) {
+    return render(
+        List.of("create"), runtimeBinary, namespace, name, spec, labels, policy, socketGroup);
+  }
+
+  /**
+   * The body of {@link #run} and {@link #create}: one container, two ways of making it. {@code
+   * leading} is the words after the binary — {@code run -d} or {@code create} — and is everything
+   * the two argvs differ by.
+   */
+  private static List<String> render(
+      List<String> leading,
+      String runtimeBinary,
+      LabelNamespace namespace,
+      String name,
+      ContainerSpec spec,
+      Map<String, String> labels,
+      LifecyclePolicy policy,
+      String socketGroup) {
     ContainersIdentifiers.requireContainerName(name);
     ContainersIdentifiers.requireImage(spec.image());
     ContainersIdentifiers.requireNetwork(spec.network());
 
     List<String> argv = new ArrayList<>();
     argv.add(runtimeBinary);
-    argv.add("run");
-    argv.add("-d");
+    argv.addAll(leading);
     // tini as PID 1, beside -d because both say what SHAPE of run this is rather than what it
     // contains. Only when the spec asked: PID 1 in a container inherits every orphan and reaps
     // none of them unless it is written to, so a container hosting a long-lived session that
@@ -493,6 +551,42 @@ public final class DockerArgv {
   }
 
   /**
+   * {@code inspect --type container --format <template> <reference>} — {@link
+   * #inspectTypeContainer(String, String, String)} with the long {@code --format}:
+   * qits-system-runner-daemon's spelling (qits-2289), for its build-plane builder and its lease
+   * containers, read by a name it derived or an id docker listed.
+   */
+  public static List<String> inspectTypeContainerFormat(
+      String runtimeBinary, String reference, String format) {
+    return List.of(
+        runtimeBinary,
+        "inspect",
+        "--type",
+        "container",
+        "--format",
+        Objects.requireNonNull(format, "format"),
+        ContainersIdentifiers.requireReference(reference));
+  }
+
+  /**
+   * {@code inspect --type container <reference>...} — no template, so the daemon's own document: a
+   * JSON array with one object per container, in one call. qits-system-runner-daemon's (qits-2289)
+   * DOCKER relay, which inspects one lease container or every container its owner listing named.
+   * Each is a {@link ContainersIdentifiers#requireReference reference}; an empty list is refused,
+   * because an inspect of nothing is docker's usage error, not an empty array.
+   */
+  public static List<String> inspectTypeContainer(String runtimeBinary, List<String> references) {
+    if (references == null || references.isEmpty()) {
+      throw new IllegalArgumentException("Invalid inspect: no container named");
+    }
+    List<String> argv = new ArrayList<>(List.of(runtimeBinary, "inspect", "--type", "container"));
+    for (String reference : references) {
+      argv.add(ContainersIdentifiers.requireReference(reference));
+    }
+    return List.copyOf(argv);
+  }
+
+  /**
    * {@code inspect -f <template> <reference>} — the bare inspect with the short {@code -f},
    * qits-bootstrap-cli's (qits-2212). It answers for whatever object carries the reference; the
    * template decides what is asked.
@@ -536,6 +630,25 @@ public final class DockerArgv {
   /** Stop it, leaving it restartable. */
   public static List<String> stop(String runtimeBinary, String name) {
     return List.of(runtimeBinary, "stop", ContainersIdentifiers.requireContainerName(name));
+  }
+
+  /**
+   * {@code stop -t <seconds> <reference>} — {@link #stop}, of a container by a {@link
+   * ContainersIdentifiers#requireReference reference}, with docker's grace period before its
+   * {@code SIGKILL} stated rather than defaulted. qits-system-runner-daemon's DOCKER relay
+   * (qits-2289), whose caller's deadline is the grace period plus its own. A negative grace is
+   * refused; zero is docker's "kill at once".
+   */
+  public static List<String> stopByReference(String runtimeBinary, String reference, int seconds) {
+    if (seconds < 0) {
+      throw new IllegalArgumentException("Invalid stop timeout: " + seconds + " seconds");
+    }
+    return List.of(
+        runtimeBinary,
+        "stop",
+        "-t",
+        String.valueOf(seconds),
+        ContainersIdentifiers.requireReference(reference));
   }
 
   /** Remove it, running or not. Every teardown ends here, and never at a {@code --rm}. */
@@ -600,6 +713,29 @@ public final class DockerArgv {
   }
 
   /**
+   * {@code logs --tail <lines> [--since <since>] <reference>} — {@link #logsTailByReference}, from
+   * a moment on when {@code since} is given; a null {@code since} renders exactly that method's
+   * list. qits-system-runner-daemon's DOCKER relay (qits-2289). {@code since} is the caller's
+   * verbatim value — a relative duration ({@code 10m}) or an RFC 3339 instant — which docker
+   * parses; belted as non-empty, free of control characters and not opening with a {@code -}, so
+   * it stays the flag's value and one element.
+   */
+  public static List<String> logsTailSince(
+      String runtimeBinary, String reference, int lines, String since) {
+    if (lines <= 0) {
+      throw new IllegalArgumentException("Invalid log tail: " + lines + " lines");
+    }
+    List<String> argv =
+        new ArrayList<>(List.of(runtimeBinary, "logs", "--tail", String.valueOf(lines)));
+    if (since != null) {
+      argv.add("--since");
+      argv.add(HostArgvBelts.requireValue("since", since));
+    }
+    argv.add(ContainersIdentifiers.requireReference(reference));
+    return List.copyOf(argv);
+  }
+
+  /**
    * {@code logs --timestamps --since <since> <reference>} — what a container printed from a moment
    * on, each line stamped. {@code since} is docker's own: an RFC 3339 time, a unix timestamp or a
    * relative duration ({@code 10m}); it is belted as one word that cannot open with a {@code -}.
@@ -636,6 +772,45 @@ public final class DockerArgv {
       argv.add("label=" + filter.getKey() + "=" + filter.getValue());
     }
     return List.copyOf(argv);
+  }
+
+  /**
+   * {@code ps -aq (--filter F)*} — {@link #psByLabels}' spelling with whole filters, in the order
+   * given: a presence-only {@code label=<key>} ({@link SwarmArgv#labelFilter(String)}) is one, which
+   * a map of label values cannot say. qits-system-runner-daemon's lease listing (qits-2289). Each
+   * filter is belted free of control characters; none at all lists every container.
+   */
+  public static List<String> psAllQuiet(String runtimeBinary, List<String> filters) {
+    List<String> argv = new ArrayList<>(List.of(runtimeBinary, "ps", "-aq"));
+    filters(argv, filters);
+    return List.copyOf(argv);
+  }
+
+  /**
+   * {@code ps -a -q [--no-trunc] (--filter F)*} — {@link #psAllQuiet} with the two flags spelled
+   * apart, and {@code --no-trunc} when asked so an id is the whole id. qits-system-runner-daemon's
+   * (qits-2289): its DOCKER relay's owned-container ids ({@code noTrunc}), and its image pass's
+   * {@link #psAncestor}. Filters as {@link #psAllQuiet}.
+   */
+  public static List<String> psAllQuietSeparate(
+      String runtimeBinary, boolean noTrunc, List<String> filters) {
+    List<String> argv = new ArrayList<>(List.of(runtimeBinary, "ps", "-a", "-q"));
+    if (noTrunc) {
+      argv.add("--no-trunc");
+    }
+    filters(argv, filters);
+    return List.copyOf(argv);
+  }
+
+  /**
+   * {@code ps -a -q --filter ancestor=<image>} — the containers, running or not, created from an
+   * image: what a runner asks before it removes one (qits-runner-javalib's {@code
+   * LifecycleArgv.psAncestor}, element for element; qits-system-runner-daemon, qits-2289). The
+   * image is a belted reference.
+   */
+  public static List<String> psAncestor(String runtimeBinary, String image) {
+    return psAllQuietSeparate(
+        runtimeBinary, false, List.of("ancestor=" + ContainersIdentifiers.requireImage(image)));
   }
 
   /**
@@ -680,6 +855,34 @@ public final class DockerArgv {
       argv.add(format);
     }
     return List.copyOf(argv);
+  }
+
+  /**
+   * {@code ps [-a] --format <template> (--filter F)*} — {@link #ps(String, boolean, List, String)}
+   * with the template FIRST and required: qits-system-runner-daemon's spelling (qits-2289), which
+   * asks which containers are on its build network. Filters as there.
+   */
+  public static List<String> psFormatFirst(
+      String runtimeBinary, boolean all, String format, List<String> filters) {
+    List<String> argv = new ArrayList<>(List.of(runtimeBinary, "ps"));
+    if (all) {
+      argv.add("-a");
+    }
+    argv.add("--format");
+    argv.add(Objects.requireNonNull(format, "format"));
+    filters(argv, filters);
+    return List.copyOf(argv);
+  }
+
+  /** {@code (--filter F)*}, each whole filter belted free of control characters; null is none. */
+  private static void filters(List<String> argv, List<String> filters) {
+    if (filters == null) {
+      return;
+    }
+    for (String filter : filters) {
+      argv.add("--filter");
+      argv.add(HostArgvBelts.requireNoControl("filter", filter));
+    }
   }
 
   /** Fetch the image, so "the registry has no such image" is its own outcome rather than a run. */
@@ -819,6 +1022,18 @@ public final class DockerArgv {
   }
 
   /**
+   * {@code volume ls (--filter F)* [--format <template>]} — the volumes a filter picks, in the
+   * caller's template; filters whole and first, as qits-system-runner-daemon's DOCKER relay
+   * (qits-2289) lists its owner-labelled volumes. Filters as {@link #psAllQuiet}; a null format
+   * states none.
+   */
+  public static List<String> volumeLs(String runtimeBinary, List<String> filters, String format) {
+    List<String> argv = new ArrayList<>(List.of(runtimeBinary, "volume", "ls"));
+    filters(argv, filters);
+    return withFormat(argv, format);
+  }
+
+  /**
    * Whether one named volume exists: {@code volume ls -q --filter name=^<name>$}.
    *
    * <p>A list rather than {@code volume inspect}, because the list keeps the exit code for the
@@ -854,10 +1069,74 @@ public final class DockerArgv {
   }
 
   /**
-   * Ask whether the network exists. <b>There is no {@code network create} here.</b> Creating a
-   * bridge is refused on a swarm-initialized host, and a network this service invented would be one
-   * no other module's containers are on — so a missing network is something a deployment answers,
-   * not something an orchestrator papers over.
+   * {@code volume inspect --format <template> <name>} — one volume, in the caller's template; exit
+   * zero is still "it exists". qits-system-runner-daemon's (qits-2289), which asks for {@code
+   * {{.Name}}} and reads the answer as the name docker knows.
+   */
+  public static List<String> volumeInspect(String runtimeBinary, String name, String format) {
+    return List.of(
+        runtimeBinary,
+        "volume",
+        "inspect",
+        "--format",
+        Objects.requireNonNull(format, "format"),
+        ContainersIdentifiers.requireVolumeName(name));
+  }
+
+  /**
+   * {@code network create --driver bridge (--label K=V)* (--opt K=V)* <network>} — a node-local
+   * bridge an embedder makes for its own containers and owns by its label: qits-system-runner-
+   * daemon's build and lease networks (qits-2289). Labels then options, each in the map's own
+   * order (a {@link SequencedMap}, so the order is the caller's and assertable); null is none.
+   *
+   * <p><b>Not something a {@link ContainerSpec} ever asks for</b>, and nothing in {@code
+   * ContainersDriver} calls it — see {@link #networkInspect(String, String)} for why the driver
+   * never invents a network. The embedder that calls this decided the network is its own.
+   *
+   * <p>Belted: the name ({@link ContainersIdentifiers#requireNetwork}), every label key ({@link
+   * ContainersIdentifiers#requireExtraLabelKey}) and option key (the same charset), and every value
+   * free of control characters.
+   */
+  public static List<String> bridgeNetworkCreate(
+      String runtimeBinary,
+      SequencedMap<String, String> labels,
+      SequencedMap<String, String> options,
+      String network) {
+    List<String> argv =
+        new ArrayList<>(List.of(runtimeBinary, "network", "create", "--driver", "bridge"));
+    if (labels != null) {
+      for (Map.Entry<String, String> label : labels.entrySet()) {
+        argv.add("--label");
+        argv.add(
+            ContainersIdentifiers.requireExtraLabelKey(label.getKey())
+                + "="
+                + HostArgvBelts.requireNoControl("label value", valueOrEmpty(label.getValue())));
+      }
+    }
+    if (options != null) {
+      for (Map.Entry<String, String> option : options.entrySet()) {
+        argv.add("--opt");
+        argv.add(
+            HostArgvBelts.requireOptionKey("network option", option.getKey())
+                + "="
+                + HostArgvBelts.requireNoControl(
+                    "network option value", valueOrEmpty(option.getValue())));
+      }
+    }
+    argv.add(ContainersIdentifiers.requireNetwork(network));
+    return List.copyOf(argv);
+  }
+
+  private static String valueOrEmpty(String value) {
+    return value == null ? "" : value;
+  }
+
+  /**
+   * Ask whether the network exists. <b>There is no {@code network create} for a {@link
+   * ContainerSpec}.</b> Creating a bridge is refused on a swarm-initialized host, and a network this
+   * service invented would be one no other module's containers are on — so a missing network is
+   * something a deployment answers, not something an orchestrator papers over. ({@link
+   * #bridgeNetworkCreate} is an embedder's own network, made by its own decision.)
    */
   public static List<String> networkInspect(String runtimeBinary, String network) {
     return List.of(
@@ -1029,6 +1308,22 @@ public final class DockerArgv {
         "image",
         "inspect",
         "-f",
+        Objects.requireNonNull(format, "format"),
+        ContainersIdentifiers.requireImage(imageRef));
+  }
+
+  /**
+   * {@code image inspect --format <template> <image>} — {@link #imageInspect} with the long {@code
+   * --format}: qits-system-runner-daemon's spelling (qits-2289), which asks whether its builder
+   * image, or a lease's, is on the node.
+   */
+  public static List<String> imageInspectFormat(
+      String runtimeBinary, String imageRef, String format) {
+    return List.of(
+        runtimeBinary,
+        "image",
+        "inspect",
+        "--format",
         Objects.requireNonNull(format, "format"),
         ContainersIdentifiers.requireImage(imageRef));
   }

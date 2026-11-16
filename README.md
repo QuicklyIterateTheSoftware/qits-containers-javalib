@@ -27,7 +27,7 @@ no split package with it.
 | | |
 |---|---|
 | `.spec` | `ContainerSpec` (with `VolumeMount`, `SharedMount`, `SecurityPosture`, `PullPolicy`, `Builder`), `LifecyclePolicy`, `VolumeSpec`, `InteractiveRunSpec`, `HostRunSpec`, `ContainersIdentifiers` (the charset belts), `LabelNamespace` |
-| `.docker` | `DockerArgv`, `SwarmArgv`, `ComposeArgv`, `InteractiveArgv`, `HostRunArgv`, `ContainerProcess` |
+| `.docker` | `DockerArgv`, `SwarmArgv`, `ComposeArgv`, `InteractiveArgv`, `HostRunArgv`, `ExecArgv`, `ContainerProcess` |
 | `.swarm` | `ServiceSpec` (with `NetworkAttachment`, `Mount`, `Publish`, `Health`, `UpdatePolicy`, `Builder`), `ServiceUpdate`, `SwarmIdentifiers` (the swarm belts) |
 | root | `ContainersDriver` and its records, `DockerContainersDriver`, `DockerSocketGroup`, `ContainersTimeouts` |
 | `.gc` | `ImageKeepRules`, `VolumeClassifier` — pure GC decisions over driver answers |
@@ -156,6 +156,26 @@ tests are where the expectations in `DockerArgvTest`, `SwarmArgvTest`, `ComposeA
 - **`ContainerProcess.runSeparate`** also takes an environment to add and stdin text to feed, the
   same way `stream` does (qits-2213: the qits CLI's `network-access` runs on it). A binary that
   cannot start answers exit 127, the reason in `stderrTail`, the same wording as `stream`'s line.
+
+## Commands of the system runner
+
+qits-system-runner-daemon runs every docker call through this library too (qits-2289), and the
+spellings it had that no builder matched were added beside their siblings, element for element as
+that daemon renders them:
+
+- **`DockerArgv`**: `create` (the 6- and 7-argument `run` as `docker create`, one renderer behind
+  both), `bridgeNetworkCreate` (`network create --driver bridge`, labels then `--opt`s in the
+  caller's order), `inspectTypeContainerFormat` and `imageInspectFormat` (the long `--format`),
+  `inspectTypeContainer(binary, references)` (no template, several references), `stopByReference`
+  (`stop -t N`), `logsTailSince` (`logs --tail N [--since S]`), `psFormatFirst`, `psAllQuiet`
+  (`ps -aq`), `psAllQuietSeparate` (`ps -a -q [--no-trunc]`), `psAncestor`, `volumeLs(binary,
+  filters, format)` and `volumeInspect(binary, name, format)`.
+- **`HostRunSpec.Builder.dns`** (`--dns <IP literal>`, belted by `requireDnsServer`) lets the
+  runner's privileged build-plane builder render through `HostRunArgv`.
+- **`ExecArgv` is the second sanctioned exception to "one `exec`"**, beside `InteractiveArgv`:
+  `exec <reference> <command...>` with no `-i`/`-t`, used only by the system runner's DOCKER exec
+  relay (owner rule 2026-11-13). The reference is `requireReference`d; the command is non-empty, free
+  of control characters, and its first element cannot open with `-`.
 
 ## Building
 

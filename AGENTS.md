@@ -37,6 +37,9 @@ the jar.
   flag spellings are qits-bootstrap-cli's, pinned by `HostRunArgvTest`. `DockerArgv`,
   `ContainersDriver` and `ContainerSpec` still render neither. A third exception is an owner
   decision, not a refactor.
+- **A caller's plain `exec` lives in `ExecArgv` only** (owner rule 2026-11-13, qits-2289): the
+  system runner's DOCKER exec relay, `exec <reference> <command...>` with no `-i`/`-t`.
+  `DockerArgv`'s only `exec`s stay the constant `buildctl` ones.
 - **qits-bootstrap-cli's argvs are pinned like the deployer's.** The builders added for it in
   `DockerArgv`, `SwarmArgv` and `ComposeArgv` (qits-2212) have their expectations copied from that
   program's tests; a changed element is a changed command on every bootstrap.

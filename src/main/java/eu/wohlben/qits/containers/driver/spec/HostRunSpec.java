@@ -67,6 +67,12 @@ public record HostRunSpec(
     PID_HOST,
     /** {@code --network <network>}. */
     NETWORK,
+    /**
+     * {@code --dns <server>}: one resolver, an IP literal ({@code ContainersIdentifiers
+     * .requireDnsServer}); one option per resolver, in call order — qits-system-runner-daemon's
+     * build-plane builder (qits-2289).
+     */
+    DNS,
     /** {@code --label <key>=<value>}. */
     LABEL,
     /** {@code --restart <policy>}. */
@@ -175,6 +181,11 @@ public record HostRunSpec(
 
     public Builder network(String network) {
       return add(Kind.NETWORK, null, network);
+    }
+
+    /** {@code --dns <server>}, one resolver per call. */
+    public Builder dns(String server) {
+      return add(Kind.DNS, null, server);
     }
 
     public Builder label(String key, String value) {

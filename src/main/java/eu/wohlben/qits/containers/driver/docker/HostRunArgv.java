@@ -34,7 +34,8 @@ import java.util.List;
  * way out: the name ({@link ContainersIdentifiers#requireReference docker's own name charset} — a
  * name like {@code qits-system-runner-7c1d2f0e-2026.1116.1} is not a DNS label), the image, every
  * network, mount, label key and value, environment key, user, group and working directory, the
- * restart policy, the capability, the resource bounds, the publish and every single-word value. The
+ * restart policy, the capability, the resource bounds, the publish, every resolver ({@code --dns},
+ * an IP literal) and every single-word value. The
  * environment values and the args are the caller's — masking a secret among them is the caller's
  * too, and nothing here logs an argv.
  */
@@ -77,6 +78,7 @@ public final class HostRunArgv {
       case PRIVILEGED -> argv.add("--privileged");
       case PID_HOST -> argv.add("--pid=host");
       case NETWORK -> pair(argv, "--network", ContainersIdentifiers.requireNetwork(value));
+      case DNS -> pair(argv, "--dns", ContainersIdentifiers.requireDnsServer(value));
       case LABEL ->
           pair(
               argv,

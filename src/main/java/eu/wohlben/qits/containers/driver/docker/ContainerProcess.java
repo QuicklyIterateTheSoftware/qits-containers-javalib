@@ -36,18 +36,24 @@ import java.util.function.Consumer;
  * words of that are constants. The container is a name a {@code ps} filtered on the builder prefix
  * produced and {@code ContainersIdentifiers.requireBuilderContainer} re-checks; the command is two
  * literals and a number. No caller may name either, which is what keeps {@code exec} from becoming
- * a general capability of this service. A second use is a decision, not a refactor.
+ * a general capability of this service. A further use is a decision, not a refactor — and two have
+ * been decided, below.
  *
- * <p>That stays true of {@link DockerArgv}, {@code ContainersDriver} and {@code ContainerSpec}, and
- * of everything this class runs. <b>The one sanctioned exception is {@link InteractiveArgv}</b>,
- * decided by the owner on 2026-11-13 when every component that talks to docker moved onto this
- * library (qits-2211): {@code exec -it} and {@code run --rm -it} for attached terminal sessions,
+ * <p>That stays true of {@link DockerArgv}, {@code ContainersDriver} and {@code ContainerSpec}.
+ * <b>The first sanctioned exception is {@link InteractiveArgv}</b>, decided by the owner on
+ * 2026-11-13 when every component that talks to docker moved onto this library (qits-2211): {@code exec -it} and {@code run --rm -it} for attached terminal sessions,
  * whose program the embedder picks from its own closed set, whose target is a canonical id the
  * daemon printed, and whose teardown is the caller's. Those argvs are never run through this class
  * — a PTY session has no deadline and no output bound, which is exactly what this class refuses.
  * {@link HostRunArgv}'s one-shot {@code run --rm} helpers (qits-2212) are a different matter: they
  * have a deadline and an end, and they run through {@link #stream}; its attached payload run, whose
  * terminal is inherited, is spawned by its embedder and never here.
+ *
+ * <p><b>The second sanctioned exception is {@link ExecArgv}</b>, under the same owner decision of
+ * 2026-11-13 (qits-2289): {@code exec <reference> <command...>} with no {@code -i}/{@code -t}, used
+ * only by the system runner's DOCKER exec relay ({@code qits targets docker exec}), whose command
+ * is its caller's. It has a deadline and an end, so unlike a terminal session it runs through this
+ * class, bounded like every other call.
  *
  * <p><b>Every entry point takes both a timeout and a bound.</b> That is the whole
  * design, and it is the repository's second invariant (AGENTS.md): a docker call with no deadline is

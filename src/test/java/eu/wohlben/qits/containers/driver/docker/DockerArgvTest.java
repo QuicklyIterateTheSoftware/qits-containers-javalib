@@ -1051,6 +1051,352 @@ public class DockerArgvTest {
         DockerArgv.networkConnect("docker", "qits-build", "qits-ct-x"));
   }
 
+  // --- qits-system-runner-daemon's commands (qits-2289) ----------------------------------------
+  //
+  // Each expectation is the argv qits-system-runner-daemon renders today, copied from its tests
+  // where they pin the list (BuildPlaneTest, LeaseNetworkTest, DockerOperationsTest,
+  // LeaseLauncherCreateArgvTest) and from its source line otherwise (cited).
+
+  private static final LabelNamespace SYSTEM_RUNNER = new LabelNamespace("qits.system.runner.");
+  private static final String LEASE = "qits-system-runner-lease-l1-r1";
+  private static final String OWNER_FILTER = "label=qits.system.runner=r1";
+
+  private static java.util.SequencedMap<String, String> ordered(String... pairs) {
+    java.util.SequencedMap<String, String> map = new java.util.LinkedHashMap<>();
+    for (int i = 0; i < pairs.length; i += 2) {
+      map.put(pairs[i], pairs[i + 1]);
+    }
+    return map;
+  }
+
+  /** {@code BuildPlaneTest} :76-78 and {@code LeaseNetworkTest} :72-82, the two bridges. */
+  @Test
+  public void theRunnersBridgesAreItsNetworkCreatesElementForElement() {
+    assertEquals(
+        List.of(
+            "docker", "network", "create", "--driver", "bridge", "--label",
+            "qits.system.runner=r1", "qits-system-runner-build-r1"),
+        DockerArgv.bridgeNetworkCreate(
+            "docker", ordered("qits.system.runner", "r1"), null, "qits-system-runner-build-r1"));
+    assertEquals(
+        List.of(
+            "docker", "network", "create", "--driver", "bridge", "--label",
+            "qits.system.runner=r1", "--opt", "com.docker.network.bridge.enable_icc=false",
+            "qits-system-runner-leases-r1"),
+        DockerArgv.bridgeNetworkCreate(
+            "docker",
+            ordered("qits.system.runner", "r1"),
+            ordered("com.docker.network.bridge.enable_icc", "false"),
+            "qits-system-runner-leases-r1"));
+    // Labels then options, each in the caller's order rather than sorted.
+    assertEquals(
+        List.of(
+            "docker", "network", "create", "--driver", "bridge", "--label", "z=1", "--label",
+            "a=", "--opt", "y=2", "--opt", "b=3", "n"),
+        DockerArgv.bridgeNetworkCreate(
+            "docker", ordered("z", "1", "a", null), ordered("y", "2", "b", "3"), "n"));
+  }
+
+  @Test
+  public void aBridgeCreateBeltsItsNameItsKeysAndItsValues() {
+    refusedWith(
+        "Invalid network",
+        () -> DockerArgv.bridgeNetworkCreate("docker", null, null, "--internal"));
+    refusedWith(
+        "Invalid label key",
+        () -> DockerArgv.bridgeNetworkCreate("docker", ordered("a=b", "v"), null, "n"));
+    refusedWith(
+        "Invalid label value",
+        () -> DockerArgv.bridgeNetworkCreate("docker", ordered("a", "x\ny"), null, "n"));
+    refusedWith(
+        "Invalid network option",
+        () -> DockerArgv.bridgeNetworkCreate("docker", null, ordered("-o", "v"), "n"));
+    refusedWith(
+        "Invalid network option",
+        () -> DockerArgv.bridgeNetworkCreate("docker", null, ordered("k=v", "v"), "n"));
+    refusedWith(
+        "Invalid network option value",
+        () -> DockerArgv.bridgeNetworkCreate("docker", null, ordered("k", "\u0000"), "n"));
+  }
+
+  /** {@code LeaseLauncherCreateArgvTest}'s spec, and its rewrite of the run argv. */
+  @Test
+  public void theLeaseCreateIsTheRunnersRewrittenRunArgvElementForElement() {
+    ContainerSpec spec =
+        ContainerSpec.builder("registry.example/ci-slot:1")
+            .network("bridge")
+            .dns("100.96.0.1", "10.255.255.254")
+            .init(true)
+            .env("TZ", "UTC")
+            .build();
+    Map<String, String> labels = Map.of("qits.system.runner.spec-hash", "h1");
+    LifecyclePolicy lifecycle = LifecyclePolicy.explicitLifetime();
+
+    List<String> create =
+        DockerArgv.create("docker", SYSTEM_RUNNER, LEASE, spec, labels, lifecycle);
+
+    assertEquals(
+        List.of(
+            "docker", "create", "--init", "--name", LEASE, "--network", "bridge",
+            "--dns", "100.96.0.1", "--dns", "10.255.255.254",
+            "--label", "qits.system.runner.spec-hash=h1",
+            "--restart", "unless-stopped",
+            "-e", "TZ=UTC",
+            "registry.example/ci-slot:1"),
+        create);
+    // The runner's rewrite: [bin, "create", run[3..]].
+    List<String> run = DockerArgv.run("docker", SYSTEM_RUNNER, LEASE, spec, labels, lifecycle);
+    List<String> rewritten = new ArrayList<>(List.of("docker", "create"));
+    rewritten.addAll(run.subList(3, run.size()));
+    assertEquals(rewritten, create);
+  }
+
+  @Test
+  public void createIsRunWithCreateForRunMinusDetachForEveryShape() {
+    for (LifecyclePolicy policy :
+        List.of(
+            LifecyclePolicy.ephemeral(null),
+            LifecyclePolicy.idleStop(Duration.ofHours(4)),
+            LifecyclePolicy.explicitLifetime())) {
+      List<String> run =
+          DockerArgv.run("docker", NS, "qits-ci-abc-0", ciStep().build(), labels(), policy, "998");
+      List<String> create =
+          DockerArgv.create(
+              "docker", NS, "qits-ci-abc-0", ciStep().build(), labels(), policy, "998");
+      List<String> rewritten = new ArrayList<>(List.of("docker", "create"));
+      rewritten.addAll(run.subList(3, run.size()));
+      assertEquals(rewritten, create);
+      assertTrue(create.contains("--group-add"), create.toString());
+      assertFalse(create.contains("--rm"), create.toString());
+      assertFalse(create.contains("-d"), create.toString());
+    }
+    assertEquals(
+        render(ciStep().build(), LifecyclePolicy.explicitLifetime()).subList(3, 10),
+        DockerArgv.create(
+                "docker",
+                NS,
+                "qits-ci-abc-0",
+                ciStep().build(),
+                labels(),
+                LifecyclePolicy.explicitLifetime())
+            .subList(2, 9));
+    // The run's belts hold for the create.
+    refusedWith(
+        "Invalid container name",
+        () ->
+            DockerArgv.create(
+                "docker", NS, "-x", ciStep().build(), labels(), LifecyclePolicy.ephemeral(null)));
+  }
+
+  /**
+   * {@code BuildPlaneTest} :615 / {@code BuildPlane.users} :534 — the template first;
+   * {@code DockerOperationsTest} :165-175 is the existing filters-first overload, unchanged.
+   */
+  @Test
+  public void theBuildNetworkListingIsTheRunnersPsElementForElement() {
+    assertEquals(
+        List.of(
+            "docker", "ps", "--format", "{{.Names}}", "--filter",
+            "network=qits-system-runner-build-r1"),
+        DockerArgv.psFormatFirst(
+            "docker", false, "{{.Names}}", List.of("network=qits-system-runner-build-r1")));
+    assertEquals(
+        List.of("docker", "ps", "-a", "--format", "{{.Names}}"),
+        DockerArgv.psFormatFirst("docker", true, "{{.Names}}", null));
+    assertEquals(
+        List.of("docker", "ps", "-a", "--filter", OWNER_FILTER, "--format", "{{json .}}"),
+        DockerArgv.ps("docker", true, List.of(OWNER_FILTER), "{{json .}}"));
+    assertThrows(
+        NullPointerException.class,
+        () -> DockerArgv.psFormatFirst("docker", false, null, List.of()));
+    refusedWith(
+        "Invalid filter",
+        () -> DockerArgv.psFormatFirst("docker", false, "{{.Names}}", List.of("a\nb")));
+  }
+
+  /**
+   * {@code LeaseContainers.list} :240-249 ({@code -aq}, a presence-only label filter),
+   * {@code DockerOperationsTest} :514-521 ({@code -a -q --no-trunc}) and qits-runner-javalib's
+   * {@code LifecycleArgv.psAncestor} ({@code -a -q --filter ancestor=}).
+   */
+  @Test
+  public void theRunnersQuietListingsAreItsPsElementForElement() {
+    assertEquals(
+        List.of(
+            "docker", "ps", "-aq", "--filter", OWNER_FILTER, "--filter",
+            "label=qits.system.runner.lease"),
+        DockerArgv.psAllQuiet(
+            "docker",
+            List.of(OWNER_FILTER, SwarmArgv.labelFilter("qits.system.runner.lease"))));
+    assertEquals(
+        List.of("docker", "ps", "-a", "-q", "--no-trunc", "--filter", OWNER_FILTER),
+        DockerArgv.psAllQuietSeparate("docker", true, List.of(OWNER_FILTER)));
+    assertEquals(
+        List.of("docker", "ps", "-a", "-q", "--filter", "ancestor=moby/buildkit:v0.33.0"),
+        DockerArgv.psAllQuietSeparate(
+            "docker", false, List.of("ancestor=moby/buildkit:v0.33.0")));
+    assertEquals(
+        List.of("docker", "ps", "-a", "-q", "--filter", "ancestor=sha256:" + "a".repeat(64)),
+        DockerArgv.psAncestor("docker", "sha256:" + "a".repeat(64)));
+    assertEquals(List.of("docker", "ps", "-aq"), DockerArgv.psAllQuiet("docker", null));
+    refusedWith("Invalid filter", () -> DockerArgv.psAllQuiet("docker", List.of("a\rb")));
+    refusedWith(
+        "Invalid filter",
+        () -> DockerArgv.psAllQuietSeparate("docker", true, java.util.Arrays.asList("x", null)));
+    refusedWith("Invalid image", () -> DockerArgv.psAncestor("docker", "-q"));
+  }
+
+  /** {@code DockerOperationsTest} :505-523 and {@code TargetVolumes.inspect} :265. */
+  @Test
+  public void theRunnersVolumeReadsAreItsElementForElement() {
+    assertEquals(
+        List.of("docker", "volume", "ls", "--filter", OWNER_FILTER, "--format", "{{json .}}"),
+        DockerArgv.volumeLs("docker", List.of(OWNER_FILTER), "{{json .}}"));
+    assertEquals(
+        List.of("docker", "volume", "ls", "--format", "{{json .}}"),
+        DockerArgv.volumeLs("docker", List.of(), "{{json .}}"));
+    assertEquals(
+        List.of("docker", "volume", "ls", "--filter", OWNER_FILTER),
+        DockerArgv.volumeLs("docker", List.of(OWNER_FILTER), null));
+    assertEquals(
+        List.of(
+            "docker", "volume", "inspect", "--format", "{{.Name}}",
+            "qits-system-runner-work-ws-42-r1"),
+        DockerArgv.volumeInspect("docker", "qits-system-runner-work-ws-42-r1", "{{.Name}}"));
+    refusedWith(
+        "Invalid filter", () -> DockerArgv.volumeLs("docker", List.of("a\nb"), "{{json .}}"));
+    refusedWith(
+        "Invalid volume name", () -> DockerArgv.volumeInspect("docker", "a/b", "{{.Name}}"));
+    assertThrows(
+        NullPointerException.class, () -> DockerArgv.volumeInspect("docker", "v", null));
+  }
+
+  /** {@code DockerOperationsTest} :330-334, both shapes; {@code DockerOperations.logs} :229. */
+  @Test
+  public void theRunnersLogsAreItsElementForElement() {
+    assertEquals(
+        List.of("docker", "logs", "--tail", "5000", "--since", "10m", LEASE),
+        DockerArgv.logsTailSince("docker", LEASE, 5000, "10m"));
+    assertEquals(
+        List.of("docker", "logs", "--tail", "42", "--since", "2026-10-26T10:00:00Z", LEASE),
+        DockerArgv.logsTailSince("docker", LEASE, 42, "2026-10-26T10:00:00Z"));
+    assertEquals(
+        DockerArgv.logsTailByReference("docker", LEASE, 200),
+        DockerArgv.logsTailSince("docker", LEASE, 200, null));
+    assertEquals(
+        List.of("docker", "logs", "--tail", "1", "--since", "2026-10-26T10:00:00+02:00", "C_1"),
+        DockerArgv.logsTailSince("docker", "C_1", 1, "2026-10-26T10:00:00+02:00"));
+  }
+
+  @Test
+  public void aLogsSinceIsTheCallersValueButNeverAnOptionOrALine() {
+    refusedWith("Invalid since", () -> DockerArgv.logsTailSince("docker", LEASE, 5, "-10m"));
+    refusedWith("Invalid since", () -> DockerArgv.logsTailSince("docker", LEASE, 5, "10m\n"));
+    refusedWith("Invalid since", () -> DockerArgv.logsTailSince("docker", LEASE, 5, ""));
+    refusedWith("Invalid log tail", () -> DockerArgv.logsTailSince("docker", LEASE, 0, "10m"));
+    refusedWith(
+        "Invalid container reference", () -> DockerArgv.logsTailSince("docker", "a b", 5, null));
+  }
+
+  /**
+   * {@code BuildPlane.builder} :730, {@code LeaseContainers.inspectArgv} :172 and {@code .exists}
+   * :211, {@code BuildPlane.imagePresent} :652.
+   */
+  @Test
+  public void theRunnersFormattedInspectsAreItsElementForElement() {
+    String stamp = "{{index .Config.Labels \"qits.system.runner.buildkitd\"}}|{{.State.Status}}";
+    assertEquals(
+        List.of(
+            "docker", "inspect", "--type", "container", "--format", stamp,
+            "qits-system-runner-buildkitd-r1"),
+        DockerArgv.inspectTypeContainerFormat("docker", "qits-system-runner-buildkitd-r1", stamp));
+    assertEquals(
+        List.of("docker", "inspect", "--type", "container", "--format", "{{.Id}}", LEASE),
+        DockerArgv.inspectTypeContainerFormat("docker", LEASE, "{{.Id}}"));
+    assertEquals(
+        List.of("docker", "image", "inspect", "--format", "{{.Id}}", "moby/buildkit:v0.33.0"),
+        DockerArgv.imageInspectFormat("docker", "moby/buildkit:v0.33.0", "{{.Id}}"));
+    // The short -f spellings stay qits-bootstrap-cli's.
+    assertEquals(
+        List.of("docker", "inspect", "--type", "container", "-f", "{{.Id}}", LEASE),
+        DockerArgv.inspectTypeContainer("docker", LEASE, "{{.Id}}"));
+    refusedWith(
+        "Invalid container reference",
+        () -> DockerArgv.inspectTypeContainerFormat("docker", "-x", "{{.Id}}"));
+    refusedWith(
+        "Invalid image", () -> DockerArgv.imageInspectFormat("docker", "a b", "{{.Id}}"));
+    assertThrows(
+        NullPointerException.class,
+        () -> DockerArgv.inspectTypeContainerFormat("docker", LEASE, null));
+  }
+
+  /** {@code DockerOperationsTest} :314 (one) and :522 (the owned ids, in one call). */
+  @Test
+  public void theRunnersWholeInspectsAreItsElementForElement() {
+    assertEquals(
+        List.of("docker", "inspect", "--type", "container", LEASE),
+        DockerArgv.inspectTypeContainer("docker", List.of(LEASE)));
+    String id = "a".repeat(64);
+    assertEquals(
+        List.of("docker", "inspect", "--type", "container", id, "Legacy_Name.1"),
+        DockerArgv.inspectTypeContainer("docker", List.of(id, "Legacy_Name.1")));
+    refusedWith(
+        "Invalid inspect: no container named",
+        () -> DockerArgv.inspectTypeContainer("docker", List.<String>of()));
+    refusedWith(
+        "Invalid inspect: no container named",
+        () -> DockerArgv.inspectTypeContainer("docker", (List<String>) null));
+    refusedWith(
+        "Invalid container reference",
+        () -> DockerArgv.inspectTypeContainer("docker", List.of(LEASE, "--size")));
+  }
+
+  /** {@code DockerOperationsTest} :451. */
+  @Test
+  public void theRunnersStopIsItsElementForElement() {
+    assertEquals(
+        List.of("docker", "stop", "-t", "10", LEASE),
+        DockerArgv.stopByReference("docker", LEASE, 10));
+    assertEquals(
+        List.of("docker", "stop", "-t", "0", "My_Container"),
+        DockerArgv.stopByReference("docker", "My_Container", 0));
+    refusedWith(
+        "Invalid stop timeout", () -> DockerArgv.stopByReference("docker", LEASE, -1));
+    refusedWith(
+        "Invalid container reference", () -> DockerArgv.stopByReference("docker", "a/b", 10));
+    // The name form is unchanged.
+    assertEquals(List.of("docker", "stop", "c"), DockerArgv.stop("docker", "c"));
+  }
+
+  @Test
+  public void nothingTheRunnersBuildersRenderCarriesRmOrExec() {
+    List<List<String>> everything =
+        List.of(
+            DockerArgv.create(
+                "docker", NS, "c", ciStep().build(), labels(), LifecyclePolicy.ephemeral(null)),
+            DockerArgv.bridgeNetworkCreate("docker", ordered("k", "v"), ordered("o", "p"), "n"),
+            DockerArgv.psFormatFirst("docker", true, "{{.Names}}", List.of("x=y")),
+            DockerArgv.psAllQuiet("docker", List.of("x=y")),
+            DockerArgv.psAllQuietSeparate("docker", true, List.of("x=y")),
+            DockerArgv.psAncestor("docker", "alpine"),
+            DockerArgv.volumeLs("docker", List.of("x=y"), "{{json .}}"),
+            DockerArgv.volumeInspect("docker", "v", "{{.Name}}"),
+            DockerArgv.logsTailSince("docker", "c", 5, "10m"),
+            DockerArgv.inspectTypeContainerFormat("docker", "c", "{{.Id}}"),
+            DockerArgv.imageInspectFormat("docker", "alpine", "{{.Id}}"),
+            DockerArgv.inspectTypeContainer("docker", List.of("c")),
+            DockerArgv.stopByReference("docker", "c", 10));
+    for (List<String> argv : everything) {
+      assertFalse(argv.contains("--rm"), argv.toString());
+      assertFalse(argv.contains("exec"), argv.toString());
+    }
+  }
+
+  private static void refusedWith(String message, Runnable call) {
+    IllegalArgumentException refused = assertThrows(IllegalArgumentException.class, call::run);
+    assertTrue(refused.getMessage().startsWith(message), refused.getMessage());
+  }
+
   // --- the namespace is the embedder's -------------------------------------------------------
 
   /** A second embedder's namespace — a runner on the same host as CS. */
