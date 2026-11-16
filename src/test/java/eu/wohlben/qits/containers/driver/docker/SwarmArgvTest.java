@@ -360,6 +360,72 @@ public class SwarmArgvTest {
   }
 
   @Test
+  public void aNullInspectFormatStatesNoneAndAFormatStaysWhereItWas() {
+    assertEquals(
+        List.of("docker", "service", "inspect", "dev-qits-gateway"),
+        SwarmArgv.serviceInspect("docker", "dev-qits-gateway", null));
+    assertEquals(
+        List.of("docker", "service", "inspect", "--format", "{{.ID}}", "dev-qits-gateway"),
+        SwarmArgv.serviceInspect("docker", "dev-qits-gateway", "{{.ID}}"));
+  }
+
+  // --- qits-system-service's reads (qits-2211) -------------------------------------------------
+  //
+  // Copied from qits-system-service's DockerArgvTest (everyListAsksForOneJsonObjectPerLine,
+  // inspectsAskForNoFormatAtAll, serviceTasksAreNotTruncated, anImplausibleReferenceNeverReachesAnArgv)
+  // and written out from its DockerArgv builder element for element.
+
+  @Test
+  public void theSwarmListingsAreTheSystemServicesElementForElement() {
+    String jsonLines = "{{json .}}";
+    assertEquals(
+        List.of("docker", "node", "ls", "--format", jsonLines),
+        SwarmArgv.nodeLs("docker", jsonLines));
+    assertEquals(
+        List.of("docker", "service", "ls", "--format", jsonLines),
+        SwarmArgv.serviceLs("docker", List.of(), jsonLines));
+    assertEquals(
+        List.of("docker", "config", "ls", "--format", jsonLines),
+        SwarmArgv.configLs("docker", jsonLines));
+    assertEquals(
+        List.of("docker", "secret", "ls", "--format", jsonLines),
+        SwarmArgv.secretLs("docker", jsonLines));
+    assertEquals(
+        List.of(
+            "docker", "service", "ps", "dev-qits-ci", "--no-trunc", "--format", jsonLines),
+        SwarmArgv.servicePs("docker", "dev-qits-ci", List.of(), true, jsonLines));
+    // The optional parts.
+    assertEquals(List.of("docker", "node", "ls"), SwarmArgv.nodeLs("docker", null));
+    assertEquals(
+        List.of("docker", "service", "ls", "--filter", "label=a=b", "--format", "{{.Name}}"),
+        SwarmArgv.serviceLs("docker", List.of(SwarmArgv.labelFilter("a", "b")), "{{.Name}}"));
+  }
+
+  @Test
+  public void theSwarmInspectsAskForNoFormatAndBeltTheReference() {
+    assertEquals(
+        List.of("docker", "node", "inspect", "abc"), SwarmArgv.nodeInspect("docker", "abc"));
+    assertEquals(
+        List.of("docker", "service", "inspect", "svc"), SwarmArgv.serviceInspect("docker", "svc"));
+    assertEquals(
+        List.of("docker", "config", "inspect", "cfg"), SwarmArgv.configInspect("docker", "cfg"));
+    for (String hostile : new String[] {null, "", "a/b", "-x", "a b", "a\nb"}) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> SwarmArgv.nodeInspect("docker", hostile),
+          String.valueOf(hostile));
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> SwarmArgv.serviceInspect("docker", hostile),
+          String.valueOf(hostile));
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> SwarmArgv.configInspect("docker", hostile),
+          String.valueOf(hostile));
+    }
+  }
+
+  @Test
   public void theOverlaysAreCreatedAsTheDeployerCreatesThem() {
     // SwarmDeploymentDriverTest.theFlatNetworksCreateArgvIsUnchanged, literally.
     assertEquals(
@@ -438,8 +504,6 @@ public class SwarmArgvTest {
   public void referencesAreRefusedOnlyWhenAbsent() {
     assertThrows(
         NullPointerException.class, () -> SwarmArgv.serviceInspect("docker", null, "{{.ID}}"));
-    assertThrows(
-        NullPointerException.class, () -> SwarmArgv.serviceInspect("docker", "svc", null));
     assertThrows(NullPointerException.class, () -> SwarmArgv.networkRm("docker", null));
     // A reference read off the daemon goes through as read: docker answers for it.
     assertEquals(

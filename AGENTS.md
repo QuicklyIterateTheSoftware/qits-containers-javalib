@@ -29,6 +29,10 @@ the jar.
 - **`SwarmArgv`'s flag order is qits-deployments-service's.** `SwarmArgvTest` copies its expected
   argvs from that service; reordering a flag is a changed command on every deployment it issues.
   `SwarmIdentifiers` belts may never be narrower than what that service renders today.
+- **`--rm` and `exec -it` live in `InteractiveArgv` only** (owner, 2026-11-13, qits-2211): attached
+  terminal sessions whose teardown is the caller's. `DockerArgv`, `ContainersDriver` and
+  `ContainerSpec` still render neither; its flag order is qits-system-service's, pinned by
+  `InteractiveArgvTest`.
 - **Packages stay under `eu.wohlben.qits.containers.driver`.** No split package with CS.
 - **Tests are plain JUnit 5 and need no docker.**
 

@@ -1,5 +1,6 @@
 package eu.wohlben.qits.containers.driver.docker;
 
+import eu.wohlben.qits.containers.driver.spec.ContainersIdentifiers;
 import eu.wohlben.qits.containers.driver.swarm.ServiceSpec;
 import eu.wohlben.qits.containers.driver.swarm.ServiceUpdate;
 import java.time.Duration;
@@ -22,6 +23,12 @@ import java.util.Objects;
  * belts are {@link eu.wohlben.qits.containers.driver.swarm.SwarmIdentifiers}' and run inside the
  * spec types; references (service, task, network, container) are rendered as given — see that class
  * for why.
+ *
+ * <p><b>The operator's reads are the exception, and say so.</b> {@link #nodeInspect}, {@link
+ * #configInspect} and the two-argument {@link #serviceInspect(String, String)} take a reference a
+ * person typed into qits-system-service's console rather than one read off the daemon, so they run
+ * {@link ContainersIdentifiers#requireReference} on it — that service's own belt, lifted. Their
+ * flag order is that service's, as the deployer's is everywhere else here.
  */
 public final class SwarmArgv {
 
@@ -194,15 +201,27 @@ public final class SwarmArgv {
         Objects.requireNonNull(service, "service"));
   }
 
-  /** {@code service inspect --format <template> <service>}. */
+  /**
+   * {@code service inspect [--format <template>] <service>}. A null format states none — the
+   * daemon's own document, a JSON array.
+   */
   public static List<String> serviceInspect(String runtimeBinary, String service, String format) {
-    return List.of(
-        runtimeBinary,
-        "service",
-        "inspect",
-        "--format",
-        Objects.requireNonNull(format, "format"),
-        Objects.requireNonNull(service, "service"));
+    List<String> argv = new ArrayList<>(List.of(runtimeBinary, "service", "inspect"));
+    if (format != null) {
+      argv.add("--format");
+      argv.add(format);
+    }
+    argv.add(Objects.requireNonNull(service, "service"));
+    return List.copyOf(argv);
+  }
+
+  /**
+   * {@code service inspect <reference>} — the whole document, of a service a person named; the
+   * reference is belted ({@link ContainersIdentifiers#requireReference}).
+   */
+  public static List<String> serviceInspect(String runtimeBinary, String reference) {
+    return serviceInspect(
+        runtimeBinary, ContainersIdentifiers.requireReference("service", reference), null);
   }
 
   /**
@@ -239,6 +258,14 @@ public final class SwarmArgv {
         Objects.requireNonNull(serviceOrTask, "service"));
   }
 
+  /** {@code service ls (--filter F)* [--format <template>]} — the services, for a person to read. */
+  public static List<String> serviceLs(String runtimeBinary, List<String> filters, String format) {
+    List<String> argv = new ArrayList<>(List.of(runtimeBinary, "service", "ls"));
+    filters(argv, filters);
+    format(argv, format);
+    return List.copyOf(argv);
+  }
+
   /** {@code service ls -q (--filter F)*} — the ids of the matching services. */
   public static List<String> serviceLsQuiet(String runtimeBinary, List<String> filters) {
     List<String> argv = new ArrayList<>(List.of(runtimeBinary, "service", "ls", "-q"));
@@ -258,6 +285,47 @@ public final class SwarmArgv {
     }
     List<String> argv = new ArrayList<>(List.of(runtimeBinary, "service", "rm"));
     argv.addAll(services);
+    return List.copyOf(argv);
+  }
+
+  // --- nodes, configs and secrets ----------------------------------------------------------------
+
+  /** {@code node ls [--format <template>]}. */
+  public static List<String> nodeLs(String runtimeBinary, String format) {
+    List<String> argv = new ArrayList<>(List.of(runtimeBinary, "node", "ls"));
+    format(argv, format);
+    return List.copyOf(argv);
+  }
+
+  /** {@code node inspect <reference>} — the whole document; the reference is belted. */
+  public static List<String> nodeInspect(String runtimeBinary, String reference) {
+    return List.of(
+        runtimeBinary, "node", "inspect", ContainersIdentifiers.requireReference("node", reference));
+  }
+
+  /** {@code config ls [--format <template>]}. */
+  public static List<String> configLs(String runtimeBinary, String format) {
+    List<String> argv = new ArrayList<>(List.of(runtimeBinary, "config", "ls"));
+    format(argv, format);
+    return List.copyOf(argv);
+  }
+
+  /** {@code config inspect <reference>} — the whole document; the reference is belted. */
+  public static List<String> configInspect(String runtimeBinary, String reference) {
+    return List.of(
+        runtimeBinary,
+        "config",
+        "inspect",
+        ContainersIdentifiers.requireReference("config", reference));
+  }
+
+  /**
+   * {@code secret ls [--format <template>]}. A listing only: there is no {@code secret inspect}
+   * here, and a secret's value is something no docker command prints anyway.
+   */
+  public static List<String> secretLs(String runtimeBinary, String format) {
+    List<String> argv = new ArrayList<>(List.of(runtimeBinary, "secret", "ls"));
+    format(argv, format);
     return List.copyOf(argv);
   }
 
@@ -414,5 +482,12 @@ public final class SwarmArgv {
 
   private static void filters(List<String> argv, List<String> filters) {
     pairs(argv, "--filter", filters == null ? List.of() : filters);
+  }
+
+  private static void format(List<String> argv, String format) {
+    if (format != null) {
+      argv.add("--format");
+      argv.add(format);
+    }
   }
 }

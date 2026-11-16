@@ -34,6 +34,14 @@ import java.util.concurrent.TimeUnit;
  * literals and a number. No caller may name either, which is what keeps {@code exec} from becoming
  * a general capability of this service. A second use is a decision, not a refactor.
  *
+ * <p>That stays true of {@link DockerArgv}, {@code ContainersDriver} and {@code ContainerSpec}, and
+ * of everything this class runs. <b>The one sanctioned exception is {@link InteractiveArgv}</b>,
+ * decided by the owner on 2026-11-13 when every component that talks to docker moved onto this
+ * library (qits-2211): {@code exec -it} and {@code run --rm -it} for attached terminal sessions,
+ * whose program the embedder picks from its own closed set, whose target is a canonical id the
+ * daemon printed, and whose teardown is the caller's. Those argvs are never run through this class
+ * — a PTY session has no deadline and no output bound, which is exactly what this class refuses.
+ *
  * <p><b>Every entry point takes both a timeout and a bound.</b> That is the whole
  * design, and it is the repository's second invariant (AGENTS.md): a docker call with no deadline is
  * a worker held forever by a daemon that stopped answering, and a capture with no bound is a heap

@@ -48,6 +48,13 @@ public final class ContainersIdentifiers {
   public static final int NAME_MAX = 190;
 
   /**
+   * How long a docker reference may be — {@link #requireReference}. Well past docker's longest
+   * generated name, and short enough to log. Lifted from qits-system-service's {@code
+   * DockerIdentifiers}, where it is the bound on every reference a browser can send.
+   */
+  public static final int REFERENCE_MAX = 128;
+
+  /**
    * How long a network alias may be. <b>63, not {@link #NAME_MAX}</b>: an alias is resolved by
    * docker's embedded DNS and a DNS label is 63 octets, so a longer one is a name that would be
    * accepted here and refused by the resolver a container asks.
@@ -159,6 +166,18 @@ public final class ContainersIdentifiers {
   private static final String BUILDER_CONTAINER = BUILDER_PREFIX + "[a-zA-Z0-9][a-zA-Z0-9_.-]*";
 
   /**
+   * A docker reference as a person types it: an id, an id prefix, or a name — of a container, or of
+   * a swarm node, service, config or secret. Docker's own name charset, {@code
+   * [a-zA-Z0-9][a-zA-Z0-9_.-]}, which a swarm task name ({@code dev-qits-ci.1.k4g0nn1ld7o2}) is
+   * inside. No {@code /}, no {@code :}, no whitespace and no leading {@code -}: those are the element
+   * boundaries a reference could otherwise forge.
+   */
+  private static final String REFERENCE = "[A-Za-z0-9][A-Za-z0-9_.-]*";
+
+  /** What the daemon prints as a container id: 64 lowercase hex characters, and nothing else. */
+  private static final String FULL_ID = "[0-9a-f]{64}";
+
+  /**
    * A label key. Dotted segments, the docker convention; no {@code =} and no whitespace, because
    * both are the boundaries a {@code --label k=v} element is split on.
    */
@@ -187,6 +206,48 @@ public final class ContainersIdentifiers {
   /** A container name, whether this service derived it or an owner brought its own. */
   public static String requireContainerName(String name) {
     return requireDnsLabel(name, NAME_MAX, "container name");
+  }
+
+  /**
+   * A container reference somebody typed — an id, an id prefix or a name — see {@link #REFERENCE}.
+   *
+   * <p><b>Looser than {@link #requireContainerName}, deliberately, and not a replacement for it.</b>
+   * That belt guards a name this library is about to GIVE a container, which has to survive being a
+   * DNS label; this one guards a name somebody is asking about, which is whatever docker or swarm
+   * called it — mixed case, underscores and dots included. Lifted rule for rule from
+   * qits-system-service's {@code DockerIdentifiers.requireContainerRef}.
+   */
+  public static String requireReference(String reference) {
+    return requireReference("container", reference);
+  }
+
+  /**
+   * The same belt, naming what is referenced — {@code node}, {@code service}, {@code config} — so
+   * the refusal says which reference was refused: {@code Invalid node reference: 'a/b'}.
+   */
+  public static String requireReference(String what, String reference) {
+    if (reference == null
+        || reference.isEmpty()
+        || reference.length() > REFERENCE_MAX
+        || !reference.matches(REFERENCE)) {
+      throw refuse(what + " reference", reference);
+    }
+    return reference;
+  }
+
+  /**
+   * The canonical container id the daemon printed — 64 lowercase hex, see {@link #FULL_ID}.
+   *
+   * <p>Called on the way OUT of resolution rather than on the way in: a reference a caller sent is
+   * resolved through an inspect first, and only what the daemon answered may reach an argv that
+   * acts on the container. A prefix is a valid {@link #requireReference reference} and not a valid
+   * id, which is the whole difference this belt exists to keep.
+   */
+  public static String requireFullId(String id) {
+    if (id == null || !id.matches(FULL_ID)) {
+      throw refuse("container id", id);
+    }
+    return id;
   }
 
   /**

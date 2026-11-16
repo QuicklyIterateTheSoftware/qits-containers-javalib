@@ -26,8 +26,8 @@ no split package with it.
 
 | | |
 |---|---|
-| `.spec` | `ContainerSpec` (with `VolumeMount`, `SharedMount`, `SecurityPosture`, `PullPolicy`, `Builder`), `LifecyclePolicy`, `VolumeSpec`, `ContainersIdentifiers` (the charset belts), `LabelNamespace` |
-| `.docker` | `DockerArgv`, `SwarmArgv`, `ContainerProcess` |
+| `.spec` | `ContainerSpec` (with `VolumeMount`, `SharedMount`, `SecurityPosture`, `PullPolicy`, `Builder`), `LifecyclePolicy`, `VolumeSpec`, `InteractiveRunSpec`, `ContainersIdentifiers` (the charset belts), `LabelNamespace` |
+| `.docker` | `DockerArgv`, `SwarmArgv`, `InteractiveArgv`, `ContainerProcess` |
 | `.swarm` | `ServiceSpec` (with `NetworkAttachment`, `Mount`, `Publish`, `Health`, `UpdatePolicy`, `Builder`), `ServiceUpdate`, `SwarmIdentifiers` (the swarm belts) |
 | root | `ContainersDriver` and its records, `DockerContainersDriver`, `DockerSocketGroup`, `ContainersTimeouts` |
 | `.gc` | `ImageKeepRules`, `VolumeClassifier` — pure GC decisions over driver answers |
@@ -97,6 +97,26 @@ beside them. `DockerArgv` gained `wait` and `volumeLsByName` for the same embedd
   and docker's own "no such service" is the answer callers handle.
 - **Templates and filters are the caller's**: every `--format` is a parameter; `labelFilter` spells
   `label=<k>[=<v>]`.
+
+## Operator reads and terminal sessions
+
+qits-system-service's console reads the host for a person and opens terminals on it (qits-2211).
+Its argvs live here too, element for element as that service renders them:
+
+- **Reads with a caller's `--format`** (a null format states none): `DockerArgv.info`, `version`,
+  `ps`, `containerInspect`, and `(binary, format)` overloads of `systemDf`, `imageLs` (no `--all`)
+  and `volumeLs`; `SwarmArgv.nodeLs`, `serviceLs`, `configLs`, `secretLs`, and `serviceInspect`
+  with a null format.
+- **References a person typed** go through `ContainersIdentifiers.requireReference` — docker's own
+  name charset, no leading `-`, at most 128 characters — in `DockerArgv.containerInspect`,
+  `logsTailByReference`, `rm(binary, List)`, and `SwarmArgv.nodeInspect`, `configInspect` and the
+  two-argument `serviceInspect`. It is looser than `requireContainerName`, which stays the belt on
+  a name this library gives a container. `requireFullId` (64 lowercase hex) guards an exec target.
+- **`InteractiveArgv` is the one sanctioned exception** to "no `--rm`" and "one `exec`": `run`
+  (`run --rm -it`, from an `InteractiveRunSpec`) and `exec` (`exec -it` on a canonical id) for
+  sessions attached to the caller's pseudo-terminal, whose teardown is the caller's. Owner decision,
+  2026-11-13. It is not a `ContainerSpec`, nothing in `ContainersDriver` runs it, and a PTY session
+  is the embedder's to spawn — `ContainerProcess` never runs one.
 
 ## Building
 

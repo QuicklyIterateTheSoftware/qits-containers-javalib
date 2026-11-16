@@ -28,6 +28,18 @@ import java.util.TreeMap;
  * docker logs} capture that is the only diagnosis a container which died on its first breath can
  * offer, and it would delete a container whose registry row still names it — which is the one state
  * the adoption rule exists to make impossible. Every teardown is an explicit {@link #rm}.
+ *
+ * <p>That stays true of this class, of {@code ContainersDriver} and of {@link ContainerSpec}. The
+ * one sanctioned exception lives elsewhere, in {@link InteractiveArgv}: an attached terminal session
+ * ({@code run --rm -it}) whose teardown is its caller's, which no registry row names and nothing
+ * here adopts. Decided by the owner on 2026-11-13, when every component that talks to docker moved
+ * onto this library (qits-2211); a second exception is a decision, not a refactor.
+ *
+ * <p><b>The reads with a caller's {@code --format}</b> — {@link #info}, {@link #version}, {@link
+ * #ps}, {@link #containerInspect}, the {@code (binary, format)} overloads of {@link #systemDf},
+ * {@link #imageLs} and {@link #volumeLs} — are qits-system-service's, which reads the host for an
+ * operator. Their element order is that service's ({@code DockerArgvTest} copies its expectations),
+ * and a {@code null} format states none.
  */
 public final class DockerArgv {
 
@@ -433,6 +445,26 @@ public final class DockerArgv {
   }
 
   /**
+   * {@code container inspect [--format <template>] <reference>} — any container on the host, by a
+   * {@link ContainersIdentifiers#requireReference reference} somebody typed rather than a name this
+   * library gave it. With no format it prints the daemon's own document, a JSON array.
+   *
+   * <p>{@code container inspect}, not the bare {@code inspect} the methods above (and {@link
+   * SwarmArgv#containerInspect}) spell: the bare one answers for an image or a volume of the same
+   * name too, and a reference a person typed may well be one.
+   */
+  public static List<String> containerInspect(
+      String runtimeBinary, String reference, String format) {
+    List<String> argv = new ArrayList<>(List.of(runtimeBinary, "container", "inspect"));
+    if (format != null) {
+      argv.add("--format");
+      argv.add(format);
+    }
+    argv.add(ContainersIdentifiers.requireReference(reference));
+    return List.copyOf(argv);
+  }
+
+  /**
    * Start the container that already carries this name. It takes no spec and no flag: everything a
    * container is was decided by the {@link #run} that created it, and a start that could re-state
    * any of it would be a second place for the sandbox to be written.
@@ -451,6 +483,23 @@ public final class DockerArgv {
     return List.of(runtimeBinary, "rm", "-f", ContainersIdentifiers.requireContainerName(name));
   }
 
+  /**
+   * {@code rm -f <reference>...}, in the order given and in one call — a sweep's ids, read off a
+   * {@code ps -aq}, or the names of an embedder's own terminal containers. Each is a {@link
+   * ContainersIdentifiers#requireReference reference}, so a short id passes; an empty list is
+   * refused, because {@code rm -f} with nothing after it is docker's usage error, not a no-op.
+   */
+  public static List<String> rm(String runtimeBinary, List<String> references) {
+    if (references == null || references.isEmpty()) {
+      throw new IllegalArgumentException("Invalid rm: no container named");
+    }
+    List<String> argv = new ArrayList<>(List.of(runtimeBinary, "rm", "-f"));
+    for (String reference : references) {
+      argv.add(ContainersIdentifiers.requireReference(reference));
+    }
+    return List.copyOf(argv);
+  }
+
   /** A bounded tail of the container's own output — the diagnosis, captured before any removal. */
   public static List<String> logsTail(String runtimeBinary, String name, int lines) {
     if (lines <= 0) {
@@ -462,6 +511,23 @@ public final class DockerArgv {
         "--tail",
         String.valueOf(lines),
         ContainersIdentifiers.requireContainerName(name));
+  }
+
+  /**
+   * {@link #logsTail}, of any container on the host by a {@link
+   * ContainersIdentifiers#requireReference reference} rather than a name this library gave it. The
+   * count is two elements, never {@code --tail=N}, and bounding it is the caller's.
+   */
+  public static List<String> logsTailByReference(String runtimeBinary, String reference, int lines) {
+    if (lines <= 0) {
+      throw new IllegalArgumentException("Invalid log tail: " + lines + " lines");
+    }
+    return List.of(
+        runtimeBinary,
+        "logs",
+        "--tail",
+        String.valueOf(lines),
+        ContainersIdentifiers.requireReference(reference));
   }
 
   /**
@@ -484,6 +550,26 @@ public final class DockerArgv {
     for (Map.Entry<String, String> filter : new TreeMap<>(filters).entrySet()) {
       argv.add("--filter");
       argv.add("label=" + filter.getKey() + "=" + filter.getValue());
+    }
+    return List.copyOf(argv);
+  }
+
+  /**
+   * {@code ps [-a] [--no-trunc] [--format <template>]} — the host's containers, for a person to
+   * read. {@code all} adds the stopped ones; {@code noTrunc} keeps an id the whole id.
+   */
+  public static List<String> ps(
+      String runtimeBinary, boolean all, boolean noTrunc, String format) {
+    List<String> argv = new ArrayList<>(List.of(runtimeBinary, "ps"));
+    if (all) {
+      argv.add("-a");
+    }
+    if (noTrunc) {
+      argv.add("--no-trunc");
+    }
+    if (format != null) {
+      argv.add("--format");
+      argv.add(format);
     }
     return List.copyOf(argv);
   }
@@ -519,6 +605,11 @@ public final class DockerArgv {
       argv.add("label=" + filter.getKey() + "=" + filter.getValue());
     }
     return List.copyOf(argv);
+  }
+
+  /** {@code volume ls [--format <template>]} — every volume on the host, for a person to read. */
+  public static List<String> volumeLs(String runtimeBinary, String format) {
+    return withFormat(List.of(runtimeBinary, "volume", "ls"), format);
   }
 
   /**
@@ -607,6 +698,21 @@ public final class DockerArgv {
     return List.of(runtimeBinary, "system", "df", "--format", DISK_USAGE_FORMAT);
   }
 
+  /** {@code system df [--format <template>]} — the same four stores, in the caller's template. */
+  public static List<String> systemDf(String runtimeBinary, String format) {
+    return withFormat(List.of(runtimeBinary, "system", "df"), format);
+  }
+
+  /** {@code info [--format <template>]} — the daemon and its machine, swarm block included. */
+  public static List<String> info(String runtimeBinary, String format) {
+    return withFormat(List.of(runtimeBinary, "info"), format);
+  }
+
+  /** {@code version [--format <template>]} — the cheapest question a daemon answers. */
+  public static List<String> version(String runtimeBinary, String format) {
+    return withFormat(List.of(runtimeBinary, "version"), format);
+  }
+
   /**
    * One line per {@code repository:tag}: {@code <id>|<repository>|<tag>|<createdAt>|<size>}.
    *
@@ -643,6 +749,15 @@ public final class DockerArgv {
   public static List<String> imageLs(String runtimeBinary) {
     return List.of(
         runtimeBinary, "image", "ls", "--all", "--no-trunc", "--format", IMAGE_FORMAT);
+  }
+
+  /**
+   * {@code image ls --no-trunc [--format <template>]} — the images a person reads, <b>without</b>
+   * {@code --all}: the intermediate and dangling rows {@link #imageLs(String)} needs for a
+   * collection are noise in a listing. {@code --no-trunc} so an id is the id and not a prefix of it.
+   */
+  public static List<String> imageLs(String runtimeBinary, String format) {
+    return withFormat(List.of(runtimeBinary, "image", "ls", "--no-trunc"), format);
   }
 
   /**
@@ -868,6 +983,17 @@ public final class DockerArgv {
 
   /** buildctl's megabyte, which is the decimal one its own help text means. */
   private static final long MEGABYTE = 1_000_000L;
+
+  /** {@code head} then {@code --format <format>}, or {@code head} alone when the format is null. */
+  private static List<String> withFormat(List<String> head, String format) {
+    if (format == null) {
+      return List.copyOf(head);
+    }
+    List<String> argv = new ArrayList<>(head);
+    argv.add("--format");
+    argv.add(format);
+    return List.copyOf(argv);
+  }
 
   /**
    * This service's labels and the owner's, in one sorted map. The owner's keys are re-checked here

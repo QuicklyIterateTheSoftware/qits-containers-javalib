@@ -451,6 +451,119 @@ public class DockerArgvTest {
     assertEquals(List.of("docker", "volume", "rm", "v"), DockerArgv.volumeRm("docker", "v"));
   }
 
+  // --- qits-system-service's reads (qits-2211) -------------------------------------------------
+  //
+  // Every expected list below is qits-system-service's: copied from its DockerArgvTest where that
+  // test spells the whole list, and otherwise written out from its DockerArgv builder element for
+  // element — the service moves onto these with its fake-docker fixtures unchanged.
+
+  /** The service's {@code ls} template: one JSON object per line. */
+  private static final String JSON_LINES = "{{json .}}";
+
+  @Test
+  public void theHostReadsAreTheSystemServicesElementForElement() {
+    assertEquals(
+        List.of("docker", "info", "--format", JSON_LINES), DockerArgv.info("docker", JSON_LINES));
+    assertEquals(
+        List.of("docker", "system", "df", "--format", JSON_LINES),
+        DockerArgv.systemDf("docker", JSON_LINES));
+    assertEquals(
+        List.of("/tmp/fake-docker/docker", "version", "--format", "{{.Server.Version}}"),
+        DockerArgv.version("/tmp/fake-docker/docker", "{{.Server.Version}}"));
+    // A null format states none.
+    assertEquals(List.of("docker", "info"), DockerArgv.info("docker", null));
+    assertEquals(List.of("docker", "version"), DockerArgv.version("docker", null));
+    // The GC overload keeps its own template.
+    assertEquals(
+        List.of("docker", "system", "df", "--format", DockerArgv.DISK_USAGE_FORMAT),
+        DockerArgv.systemDf("docker"));
+  }
+
+  @Test
+  public void theNodeListingsAreTheSystemServicesElementForElement() {
+    assertEquals(
+        List.of("docker", "ps", "-a", "--no-trunc", "--format", JSON_LINES),
+        DockerArgv.ps("docker", true, true, JSON_LINES));
+    assertEquals(
+        List.of("docker", "ps", "--no-trunc", "--format", JSON_LINES),
+        DockerArgv.ps("docker", false, true, JSON_LINES));
+    assertEquals(List.of("docker", "ps"), DockerArgv.ps("docker", false, false, null));
+    assertEquals(
+        List.of("docker", "image", "ls", "--no-trunc", "--format", JSON_LINES),
+        DockerArgv.imageLs("docker", JSON_LINES));
+    assertFalse(DockerArgv.imageLs("docker", JSON_LINES).contains("--all"));
+    assertEquals(
+        List.of("docker", "volume", "ls", "--format", JSON_LINES),
+        DockerArgv.volumeLs("docker", JSON_LINES));
+    // network ls is SwarmArgv's, with no filter.
+    assertEquals(
+        List.of("docker", "network", "ls", "--format", JSON_LINES),
+        SwarmArgv.networkLs("docker", List.of(), JSON_LINES));
+  }
+
+  @Test
+  public void aContainerIsInspectedByAReferenceSomebodyTyped() {
+    // DockerArgvTest.inspectsAskForNoFormatAtAll, literally.
+    assertEquals(
+        List.of("docker", "container", "inspect", "cid"),
+        DockerArgv.containerInspect("docker", "cid", null));
+    // ...theExecProbeAsksForExactlyTheThreeFactsTheTerminalNeeds, literally.
+    assertEquals(
+        List.of(
+            "docker",
+            "container",
+            "inspect",
+            "--format",
+            "{{.Id}}|{{.State.Running}}|{{.Name}}",
+            "dev-qits-ci.1.abc"),
+        DockerArgv.containerInspect(
+            "docker", "dev-qits-ci.1.abc", "{{.Id}}|{{.State.Running}}|{{.Name}}"));
+    // ...logsCarryTheTailAsTwoElements, literally.
+    assertEquals(
+        List.of("docker", "logs", "--tail", "50", "cid"),
+        DockerArgv.logsTailByReference("docker", "cid", 50));
+    // A reference may be what a name may not: docker's own names carry upper case and underscores.
+    assertEquals(
+        List.of("docker", "logs", "--tail", "10", "My_Container"),
+        DockerArgv.logsTailByReference("docker", "My_Container", 10));
+    assertThrows(
+        IllegalArgumentException.class, () -> DockerArgv.logsTailByReference("docker", "cid", 0));
+  }
+
+  @Test
+  public void theSweepsListingAndRemovalAreTheSystemServices() {
+    // ...theSweepFiltersOnTheOwnerLabelAndNotOnANamePrefix: psByOwner is psByLabels on one label.
+    assertEquals(
+        List.of("docker", "ps", "-aq", "--filter", "label=qits.system.owner=qits-platform-system"),
+        DockerArgv.psByLabels("docker", Map.of("qits.system.owner", "qits-platform-system")));
+    // ...removalTakesEveryIdInOneCall, literally.
+    assertEquals(
+        List.of("docker", "rm", "-f", "a", "b"), DockerArgv.rm("docker", List.of("a", "b")));
+    // The glances teardown: one name, the list form.
+    assertEquals(
+        List.of("docker", "rm", "-f", "qits-system-glances-11111111-2222-3333-4444-555555555555"),
+        DockerArgv.rm(
+            "docker", List.of("qits-system-glances-11111111-2222-3333-4444-555555555555")));
+    assertThrows(IllegalArgumentException.class, () -> DockerArgv.rm("docker", List.<String>of()));
+    assertThrows(
+        IllegalArgumentException.class, () -> DockerArgv.rm("docker", List.of("a", "-f")));
+    // The image pull is the same argv the service builds.
+    String glances = "mirror.dev.localhost:8080/hub/nicolargo/glances:4.5.6-full";
+    assertEquals(List.of("docker", "pull", glances), DockerArgv.pull("docker", glances));
+  }
+
+  @Test
+  public void anImplausibleReferenceNeverReachesAnArgv() {
+    // ...anImplausibleReferenceNeverReachesAnArgv, against the library's belt.
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> DockerArgv.containerInspect("docker", "--privileged", null));
+    assertThrows(
+        IllegalArgumentException.class, () -> DockerArgv.logsTailByReference("docker", "a b", 10));
+    assertThrows(IllegalArgumentException.class, () -> SwarmArgv.nodeInspect("docker", "a/b"));
+    assertThrows(IllegalArgumentException.class, () -> SwarmArgv.serviceInspect("docker", ""));
+  }
+
   @Test
   public void listingsRenderOneFilterPerLabelInASortedOrder() {
     assertEquals(
