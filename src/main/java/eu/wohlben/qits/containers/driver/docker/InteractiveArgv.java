@@ -21,7 +21,8 @@ import java.util.SequencedMap;
  * {@code --rm} for the exit, an explicit {@link DockerArgv#rm(String, List)} by name when the caller
  * ends it first. Decided by the owner on 2026-11-13, when every component that talks to docker
  * moved onto this library (qits-2211); qits-system-service's host monitor and container shell are
- * what it was cut to. A further exception is a decision, not a refactor.
+ * what it was cut to. The same decision covers {@link HostRunArgv}'s {@code run --rm} (qits-2212),
+ * the only other {@code --rm}; a further exception is a decision, not a refactor.
  *
  * <p><b>Nothing here runs a process.</b> A PTY session is the embedder's to spawn; {@link
  * ContainerProcess}'s bounded captures are the wrong tool for one, by design.

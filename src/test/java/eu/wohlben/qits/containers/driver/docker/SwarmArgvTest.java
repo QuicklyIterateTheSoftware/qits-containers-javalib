@@ -425,6 +425,98 @@ public class SwarmArgvTest {
     }
   }
 
+  // --- qits-bootstrap-cli's (qits-2212) -------------------------------------------------------
+  //
+  // Copied from that program's DockerStackTest and DockerNetworkTest where they pin the argv, and
+  // from its source line otherwise (cited).
+
+  @Test
+  public void theBootstrapSwarmAndStackCommandsAreTheClisElementForElement() {
+    // Docker :202.
+    assertEquals(List.of("docker", "swarm", "init"), SwarmArgv.swarmInit("docker"));
+    // DockerStackTest :35-36 and :56.
+    assertEquals(
+        List.of(
+            "docker", "stack", "deploy", "--resolve-image", "never", "-c",
+            "/w/docker-compose.qits.yml", "qits"),
+        SwarmArgv.stackDeploy("docker", "/w/docker-compose.qits.yml", "qits"));
+    assertEquals(List.of("docker", "stack", "rm", "qits"), SwarmArgv.stackRm("docker", "qits"));
+    // DockerStackTest :66-67, :76-77 and :87-88 — the existing builders render them.
+    assertEquals(
+        List.of("docker", "service", "ls", "--format", "{{.Name}}"),
+        SwarmArgv.serviceLs("docker", List.of(), "{{.Name}}"));
+    assertEquals(
+        List.of(
+            "docker", "service", "ls", "--filter", "label=qits.platform.deployments.app-name",
+            "--format", "{{.Name}}"),
+        SwarmArgv.serviceLs(
+            "docker", List.of("label=qits.platform.deployments.app-name"), "{{.Name}}"));
+    assertEquals(
+        List.of("docker", "service", "rm", "qits_prod-qits-ci", "qits_prod-qits-events"),
+        SwarmArgv.serviceRm("docker", List.of("qits_prod-qits-ci", "qits_prod-qits-events")));
+    assertEquals(
+        List.of("docker", "service", "rm", "qits_prod-qits-ci", "qits_prod-qits-events"),
+        SwarmArgv.serviceRmReferences(
+            "docker", List.of("qits_prod-qits-ci", "qits_prod-qits-events")));
+    // DockerNetworkTest :31-32 — the existing overlay create.
+    assertEquals(
+        List.of("docker", "network", "create", "-d", "overlay", "--attachable", "qits-net"),
+        SwarmArgv.overlayNetworkCreate("docker", "qits-net", true, false, null, List.of()));
+    // UnwrapPhases :387-397 — the existing listing, with and without a filter.
+    assertEquals(
+        List.of("docker", "network", "ls", "--format", "{{.Name}}"),
+        SwarmArgv.networkLs("docker", List.of(), "{{.Name}}"));
+    assertEquals(
+        List.of("docker", "network", "ls", "--filter", "label=qits.cd.network", "--format", "{{.Name}}"),
+        SwarmArgv.networkLs("docker", List.of("label=qits.cd.network"), "{{.Name}}"));
+    // PipelinePhases :3489-3490 — one change, no --detach.
+    assertEquals(
+        List.of(
+            "docker", "service", "update", "--env-add", "QITS_STARTUP_SEED_ENABLED=true",
+            "qits_qits-projects"),
+        SwarmArgv.serviceEnvAdd(
+            "docker", "qits_qits-projects", List.of("QITS_STARTUP_SEED_ENABLED=true")));
+  }
+
+  @Test
+  public void theBootstrapSecretCommandsAreTheClisElementForElement() {
+    // SeedPhases :4256, :4268 and :4274.
+    assertEquals(
+        List.of("docker", "secret", "inspect", "qits-dns-hetzner-token-0a1b2c3d4e5f"),
+        SwarmArgv.secretInspect("docker", "qits-dns-hetzner-token-0a1b2c3d4e5f"));
+    assertEquals(
+        List.of("docker", "secret", "create", "qits-dns-hetzner-token-0a1b2c3d4e5f", "-"),
+        SwarmArgv.secretCreateFromStdin("docker", "qits-dns-hetzner-token-0a1b2c3d4e5f"));
+  }
+
+  @Test
+  public void theBootstrapSwarmCommandsBeltWhatTheyAreHanded() {
+    assertThrows(
+        IllegalArgumentException.class, () -> SwarmArgv.stackDeploy("docker", "-c", "qits"));
+    assertThrows(
+        IllegalArgumentException.class, () -> SwarmArgv.stackDeploy("docker", "/w/a.yml", "-q"));
+    assertThrows(IllegalArgumentException.class, () -> SwarmArgv.stackRm("docker", "a b"));
+    assertThrows(IllegalArgumentException.class, () -> SwarmArgv.secretInspect("docker", "-f"));
+    assertThrows(
+        IllegalArgumentException.class, () -> SwarmArgv.secretCreateFromStdin("docker", "a/b"));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> SwarmArgv.serviceRmReferences("docker", List.of("ok", "-f")));
+    assertThrows(
+        IllegalArgumentException.class, () -> SwarmArgv.serviceRmReferences("docker", List.of()));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> SwarmArgv.serviceEnvAdd("docker", "svc", List.of("NO_VALUE")));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> SwarmArgv.serviceEnvAdd("docker", "svc", List.of("A-B=1")));
+    assertThrows(
+        IllegalArgumentException.class, () -> SwarmArgv.serviceEnvAdd("docker", "svc", List.of()));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> SwarmArgv.serviceEnvAdd("docker", "-svc", List.of("A=1")));
+  }
+
   @Test
   public void theOverlaysAreCreatedAsTheDeployerCreatesThem() {
     // SwarmDeploymentDriverTest.theFlatNetworksCreateArgvIsUnchanged, literally.

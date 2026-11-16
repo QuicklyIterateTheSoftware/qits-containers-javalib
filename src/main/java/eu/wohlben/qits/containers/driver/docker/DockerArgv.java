@@ -8,6 +8,7 @@ import eu.wohlben.qits.containers.driver.spec.VolumeSpec;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.TreeMap;
 
 /**
@@ -30,10 +31,20 @@ import java.util.TreeMap;
  * the adoption rule exists to make impossible. Every teardown is an explicit {@link #rm}.
  *
  * <p>That stays true of this class, of {@code ContainersDriver} and of {@link ContainerSpec}. The
- * one sanctioned exception lives elsewhere, in {@link InteractiveArgv}: an attached terminal session
- * ({@code run --rm -it}) whose teardown is its caller's, which no registry row names and nothing
- * here adopts. Decided by the owner on 2026-11-13, when every component that talks to docker moved
- * onto this library (qits-2211); a second exception is a decision, not a refactor.
+ * two sanctioned exceptions live elsewhere, both under the owner's decision of 2026-11-13, when
+ * every component that talks to docker moved onto this library. {@link InteractiveArgv}: an
+ * attached terminal session ({@code run --rm -it}) whose teardown is its caller's (qits-2211). And
+ * {@link HostRunArgv}: an embedder's one-shot helpers and its attached payload run ({@code run
+ * --rm}), whose teardown is docker's {@code --rm} (qits-2212). Neither is named by a registry row,
+ * and nothing here adopts them; a third exception is a decision, not a refactor.
+ *
+ * <p><b>qits-bootstrap-cli's commands</b> (qits-2212) are here too, element for element as that
+ * program renders them, short {@code -f} spellings included: {@link #inspect}, {@link
+ * #inspectTypeContainer}, {@link #imageInspect}, the three-argument {@link #networkInspect(String,
+ * String, String)}, {@link #images}, the {@code --config} {@link #pull(String, String, String)} and
+ * {@link #push}, {@link #tag}, {@link #load}, {@link #build}, {@link #cpIn}/{@link #cpOut}, {@link
+ * #startAttached}, {@link #rmStopped}, {@link #rmiForce} and the rest. Their host paths and
+ * one-word values are belted by {@code HostArgvBelts}.
  *
  * <p><b>The reads with a caller's {@code --format}</b> — {@link #info}, {@link #version}, {@link
  * #ps}, {@link #containerInspect}, the {@code (binary, format)} overloads of {@link #systemDf},
@@ -465,12 +476,61 @@ public final class DockerArgv {
   }
 
   /**
+   * {@code inspect --type container -f <template> <reference>} — qits-bootstrap-cli's spelling
+   * (qits-2212): the bare {@code inspect}, narrowed to containers by {@code --type} rather than by
+   * the {@code container} subcommand {@link #containerInspect} uses, and the short {@code -f}.
+   */
+  public static List<String> inspectTypeContainer(
+      String runtimeBinary, String reference, String format) {
+    return List.of(
+        runtimeBinary,
+        "inspect",
+        "--type",
+        "container",
+        "-f",
+        Objects.requireNonNull(format, "format"),
+        ContainersIdentifiers.requireReference(reference));
+  }
+
+  /**
+   * {@code inspect -f <template> <reference>} — the bare inspect with the short {@code -f},
+   * qits-bootstrap-cli's (qits-2212). It answers for whatever object carries the reference; the
+   * template decides what is asked.
+   */
+  public static List<String> inspect(String runtimeBinary, String reference, String format) {
+    return List.of(
+        runtimeBinary,
+        "inspect",
+        "-f",
+        Objects.requireNonNull(format, "format"),
+        ContainersIdentifiers.requireReference(reference));
+  }
+
+  /**
    * Start the container that already carries this name. It takes no spec and no flag: everything a
    * container is was decided by the {@link #run} that created it, and a start that could re-state
    * any of it would be a second place for the sandbox to be written.
    */
   public static List<String> start(String runtimeBinary, String name) {
     return List.of(runtimeBinary, "start", ContainersIdentifiers.requireContainerName(name));
+  }
+
+  /**
+   * {@link #start}, of a container by a {@link ContainersIdentifiers#requireReference reference} —
+   * one an embedder read off a {@code ps}, whose name need not be a DNS label
+   * ({@code qits-system-runner-7c1d2f0e-2026.1116.41632}).
+   */
+  public static List<String> startByReference(String runtimeBinary, String reference) {
+    return List.of(runtimeBinary, "start", ContainersIdentifiers.requireReference(reference));
+  }
+
+  /**
+   * {@code start -a <reference>} — start a {@code create}d container and stay attached to its
+   * output until it exits; the exit code is the container's. qits-bootstrap-cli's seed builds
+   * (qits-2212), run through {@link ContainerProcess#stream} so every line arrives as it is printed.
+   */
+  public static List<String> startAttached(String runtimeBinary, String reference) {
+    return List.of(runtimeBinary, "start", "-a", ContainersIdentifiers.requireReference(reference));
   }
 
   /** Stop it, leaving it restartable. */
@@ -500,6 +560,15 @@ public final class DockerArgv {
     return List.copyOf(argv);
   }
 
+  /**
+   * {@code rm <reference>}, <b>without</b> {@code -f}: a container that has exited — a {@code
+   * create}d one after its {@link #startAttached} returned. Docker refuses a running one, which is
+   * the point of leaving the force out.
+   */
+  public static List<String> rmStopped(String runtimeBinary, String reference) {
+    return List.of(runtimeBinary, "rm", ContainersIdentifiers.requireReference(reference));
+  }
+
   /** A bounded tail of the container's own output — the diagnosis, captured before any removal. */
   public static List<String> logsTail(String runtimeBinary, String name, int lines) {
     if (lines <= 0) {
@@ -527,6 +596,21 @@ public final class DockerArgv {
         "logs",
         "--tail",
         String.valueOf(lines),
+        ContainersIdentifiers.requireReference(reference));
+  }
+
+  /**
+   * {@code logs --timestamps --since <since> <reference>} — what a container printed from a moment
+   * on, each line stamped. {@code since} is docker's own: an RFC 3339 time, a unix timestamp or a
+   * relative duration ({@code 10m}); it is belted as one word that cannot open with a {@code -}.
+   */
+  public static List<String> logsSince(String runtimeBinary, String reference, String since) {
+    return List.of(
+        runtimeBinary,
+        "logs",
+        "--timestamps",
+        "--since",
+        HostArgvBelts.requireWord("since", since),
         ContainersIdentifiers.requireReference(reference));
   }
 
@@ -574,9 +658,121 @@ public final class DockerArgv {
     return List.copyOf(argv);
   }
 
+  /**
+   * {@code ps [-a] (--filter F)* [--format <template>]} — the containers a filter picks, in the
+   * caller's template. qits-bootstrap-cli's (qits-2212): a filter is spelled whole by the caller
+   * ({@link SwarmArgv#labelFilter} spells a label one).
+   */
+  public static List<String> ps(
+      String runtimeBinary, boolean all, List<String> filters, String format) {
+    List<String> argv = new ArrayList<>(List.of(runtimeBinary, "ps"));
+    if (all) {
+      argv.add("-a");
+    }
+    if (filters != null) {
+      for (String filter : filters) {
+        argv.add("--filter");
+        argv.add(HostArgvBelts.requireNoControl("filter", filter));
+      }
+    }
+    if (format != null) {
+      argv.add("--format");
+      argv.add(format);
+    }
+    return List.copyOf(argv);
+  }
+
   /** Fetch the image, so "the registry has no such image" is its own outcome rather than a run. */
   public static List<String> pull(String runtimeBinary, String imageRef) {
     return List.of(runtimeBinary, "pull", ContainersIdentifiers.requireImage(imageRef));
+  }
+
+  // --- images built, moved and copied (qits-bootstrap-cli, qits-2212) ---------------------------
+
+  /**
+   * {@code [--config <dir>] pull <image>} — the pull with the docker CLI pointed at a config
+   * directory of the caller's, where the registry credential is a file and never an argument. The
+   * {@code --config} is docker's GLOBAL option, so it comes before the subcommand; a null directory
+   * states none and renders exactly {@link #pull(String, String)}.
+   */
+  public static List<String> pull(String runtimeBinary, String configDir, String imageRef) {
+    return withConfig(runtimeBinary, configDir, "pull", imageRef);
+  }
+
+  /** {@code [--config <dir>] push <image>} — the push, as {@link #pull(String, String, String)}. */
+  public static List<String> push(String runtimeBinary, String configDir, String imageRef) {
+    return withConfig(runtimeBinary, configDir, "push", imageRef);
+  }
+
+  /** {@code tag <source> <target>} — a second local name for an image. Both are belted refs. */
+  public static List<String> tag(String runtimeBinary, String source, String target) {
+    return List.of(
+        runtimeBinary,
+        "tag",
+        ContainersIdentifiers.requireImage(source),
+        ContainersIdentifiers.requireImage(target));
+  }
+
+  /** {@code load -i <archive>} — an image tarball on the host into the daemon. */
+  public static List<String> load(String runtimeBinary, String archive) {
+    return List.of(
+        runtimeBinary, "load", "-i", HostArgvBelts.requireHostPath("image archive", archive));
+  }
+
+  /**
+   * {@code build -f <dockerfile> -t <tag> <context>} — a build on the host daemon's own builder.
+   * The paths are the docker CLI's to read, so they are this process's paths.
+   */
+  public static List<String> build(
+      String runtimeBinary, String dockerfile, String tag, String context) {
+    return List.of(
+        runtimeBinary,
+        "build",
+        "-f",
+        HostArgvBelts.requireHostPath("dockerfile", dockerfile),
+        "-t",
+        ContainersIdentifiers.requireImage(tag),
+        HostArgvBelts.requireHostPath("build context", context));
+  }
+
+  /**
+   * {@code cp <host path> <container>:<path>} — into a container, typically a {@code create}d one
+   * before its {@link #startAttached}. The host path is read by the docker CLI, so it is this
+   * process's; the container path is absolute and carries no {@code :}.
+   */
+  public static List<String> cpIn(
+      String runtimeBinary, String hostPath, String container, String containerPath) {
+    return List.of(
+        runtimeBinary,
+        "cp",
+        HostArgvBelts.requireHostPath("host path", hostPath),
+        ContainersIdentifiers.requireReference(container)
+            + ":"
+            + ContainersIdentifiers.requireContainerPath(containerPath));
+  }
+
+  /** {@code cp <container>:<path> <host path>} — out of a container; {@link #cpIn} reversed. */
+  public static List<String> cpOut(
+      String runtimeBinary, String container, String containerPath, String hostPath) {
+    return List.of(
+        runtimeBinary,
+        "cp",
+        ContainersIdentifiers.requireReference(container)
+            + ":"
+            + ContainersIdentifiers.requireContainerPath(containerPath),
+        HostArgvBelts.requireHostPath("host path", hostPath));
+  }
+
+  private static List<String> withConfig(
+      String runtimeBinary, String configDir, String verb, String imageRef) {
+    List<String> argv = new ArrayList<>(List.of(runtimeBinary));
+    if (configDir != null) {
+      argv.add("--config");
+      argv.add(HostArgvBelts.requireHostPath("docker config directory", configDir));
+    }
+    argv.add(verb);
+    argv.add(ContainersIdentifiers.requireImage(imageRef));
+    return List.copyOf(argv);
   }
 
   /** Create the named volume, labelled. Creating one that exists is docker's own no-op. */
@@ -589,6 +785,16 @@ public final class DockerArgv {
     }
     argv.add(spec.name());
     return List.copyOf(argv);
+  }
+
+  /**
+   * {@code volume create <name>}, unlabelled — a volume an embedder names and owns by the name
+   * alone, with no {@link LabelNamespace} in it (qits-bootstrap-cli, qits-2212). Creating one that
+   * exists is docker's own no-op.
+   */
+  public static List<String> volumeCreate(String runtimeBinary, String name) {
+    return List.of(
+        runtimeBinary, "volume", "create", ContainersIdentifiers.requireVolumeName(name));
   }
 
   /** Remove the named volume. Only ever an explicit ask — nothing sweeps a volume. */
@@ -641,6 +847,12 @@ public final class DockerArgv {
         ContainersIdentifiers.requireVolumeName(name));
   }
 
+  /** {@code volume inspect <name>} — the whole document; exit zero is "it exists". */
+  public static List<String> volumeInspect(String runtimeBinary, String name) {
+    return List.of(
+        runtimeBinary, "volume", "inspect", ContainersIdentifiers.requireVolumeName(name));
+  }
+
   /**
    * Ask whether the network exists. <b>There is no {@code network create} here.</b> Creating a
    * bridge is refused on a swarm-initialized host, and a network this service invented would be one
@@ -650,6 +862,21 @@ public final class DockerArgv {
   public static List<String> networkInspect(String runtimeBinary, String network) {
     return List.of(
         runtimeBinary, "network", "inspect", ContainersIdentifiers.requireNetwork(network));
+  }
+
+  /**
+   * {@code network inspect -f <template> <network>} — the short {@code -f}, qits-bootstrap-cli's
+   * (qits-2212); {@link SwarmArgv#networkInspect(String, String, String)} spells {@code --format}
+   * and leaves the name unbelted. This one belts it.
+   */
+  public static List<String> networkInspect(String runtimeBinary, String network, String format) {
+    return List.of(
+        runtimeBinary,
+        "network",
+        "inspect",
+        "-f",
+        Objects.requireNonNull(format, "format"),
+        ContainersIdentifiers.requireNetwork(network));
   }
 
   /**
@@ -669,6 +896,30 @@ public final class DockerArgv {
         "connect",
         ContainersIdentifiers.requireNetwork(network),
         ContainersIdentifiers.requireContainerName(name));
+  }
+
+  /**
+   * {@code network disconnect <network> <container>} — the one {@code network disconnect}, and it is
+   * an embedder's own (qits-bootstrap-cli's unwrap, qits-2212): taking its own containers off a
+   * network it is about to remove. Nothing a {@link ContainerSpec} describes is ever disconnected.
+   */
+  public static List<String> networkDisconnect(
+      String runtimeBinary, String network, String container) {
+    return List.of(
+        runtimeBinary,
+        "network",
+        "disconnect",
+        ContainersIdentifiers.requireNetwork(network),
+        ContainersIdentifiers.requireReference(container));
+  }
+
+  /**
+   * {@code network rm <network>}, belted — {@link SwarmArgv#networkRm} renders the name as given,
+   * this one refuses a name that is not docker's network charset (qits-bootstrap-cli's unwrap,
+   * qits-2212, removes names read off {@code network ls}).
+   */
+  public static List<String> networkRm(String runtimeBinary, String network) {
+    return List.of(runtimeBinary, "network", "rm", ContainersIdentifiers.requireNetwork(network));
   }
 
   // --- garbage collection -------------------------------------------------------------------
@@ -761,6 +1012,28 @@ public final class DockerArgv {
   }
 
   /**
+   * {@code images [--format <template>]} — the plain listing, with neither {@code --all} nor {@code
+   * --no-trunc}: qits-bootstrap-cli's unwrap (qits-2212) reads {@code repository:tag} off it.
+   */
+  public static List<String> images(String runtimeBinary, String format) {
+    return withFormat(List.of(runtimeBinary, "images"), format);
+  }
+
+  /**
+   * {@code image inspect -f <template> <image>} — whether a reference is on this daemon (exit zero)
+   * and, through the template, what it is. The short {@code -f} is qits-bootstrap-cli's.
+   */
+  public static List<String> imageInspect(String runtimeBinary, String imageRef, String format) {
+    return List.of(
+        runtimeBinary,
+        "image",
+        "inspect",
+        "-f",
+        Objects.requireNonNull(format, "format"),
+        ContainersIdentifiers.requireImage(imageRef));
+  }
+
+  /**
    * What every container on the host — running or not — was created from.
    *
    * <p><b>It is {@code .Image} and not {@code .ImageID}, and that is measured rather than
@@ -823,9 +1096,34 @@ public final class DockerArgv {
     return List.copyOf(argv);
   }
 
+  /**
+   * {@code rmi -f <image>...} — FORCED, and so not a collection: everything above refuses
+   * {@code -f} because a garbage collection must lose to a reference somebody else holds. This is a
+   * teardown that means to win — qits-bootstrap-cli's unwrap (qits-2212), removing the images of a
+   * platform it is taking off the machine. Each reference is belted; an empty list is refused.
+   */
+  public static List<String> rmiForce(String runtimeBinary, List<String> references) {
+    if (references == null || references.isEmpty()) {
+      throw new IllegalArgumentException("Invalid image references: none");
+    }
+    List<String> argv = new ArrayList<>(List.of(runtimeBinary, "rmi", "-f"));
+    for (String reference : references) {
+      argv.add(ContainersIdentifiers.requireImage(reference));
+    }
+    return List.copyOf(argv);
+  }
+
   /** Volumes no container references — the only volumes a collection may even consider. */
   public static List<String> volumeLsDangling(String runtimeBinary) {
     return List.of(runtimeBinary, "volume", "ls", "-q", "--filter", "dangling=true");
+  }
+
+  /**
+   * {@link #volumeLsDangling}, with the filter spelled {@code -f} — qits-bootstrap-cli's
+   * {@code volume ls -q -f dangling=true} (qits-2212), element for element.
+   */
+  public static List<String> volumeLsDanglingShort(String runtimeBinary) {
+    return List.of(runtimeBinary, "volume", "ls", "-q", "-f", "dangling=true");
   }
 
   /**
@@ -909,6 +1207,20 @@ public final class DockerArgv {
   /** What the host builder's cache holds. A read; it removes nothing. */
   public static List<String> buildxDu(String runtimeBinary) {
     return List.of(runtimeBinary, "buildx", "du");
+  }
+
+  /** {@code buildx ls} — the host's buildx builders, one table. A read. */
+  public static List<String> buildxLs(String runtimeBinary) {
+    return List.of(runtimeBinary, "buildx", "ls");
+  }
+
+  /**
+   * {@code buildx rm <builder>} — one builder by name; qits-bootstrap-cli (qits-2212) retires its
+   * legacy {@code docker-container} builders with it. The name is belted as a reference.
+   */
+  public static List<String> buildxRm(String runtimeBinary, String builder) {
+    return List.of(
+        runtimeBinary, "buildx", "rm", ContainersIdentifiers.requireReference("builder", builder));
   }
 
   /** Where the buildx plugin is told to keep its own state — see {@link #buildxEnvironment}. */

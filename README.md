@@ -26,8 +26,8 @@ no split package with it.
 
 | | |
 |---|---|
-| `.spec` | `ContainerSpec` (with `VolumeMount`, `SharedMount`, `SecurityPosture`, `PullPolicy`, `Builder`), `LifecyclePolicy`, `VolumeSpec`, `InteractiveRunSpec`, `ContainersIdentifiers` (the charset belts), `LabelNamespace` |
-| `.docker` | `DockerArgv`, `SwarmArgv`, `InteractiveArgv`, `ContainerProcess` |
+| `.spec` | `ContainerSpec` (with `VolumeMount`, `SharedMount`, `SecurityPosture`, `PullPolicy`, `Builder`), `LifecyclePolicy`, `VolumeSpec`, `InteractiveRunSpec`, `HostRunSpec`, `ContainersIdentifiers` (the charset belts), `LabelNamespace` |
+| `.docker` | `DockerArgv`, `SwarmArgv`, `ComposeArgv`, `InteractiveArgv`, `HostRunArgv`, `ContainerProcess` |
 | `.swarm` | `ServiceSpec` (with `NetworkAttachment`, `Mount`, `Publish`, `Health`, `UpdatePolicy`, `Builder`), `ServiceUpdate`, `SwarmIdentifiers` (the swarm belts) |
 | root | `ContainersDriver` and its records, `DockerContainersDriver`, `DockerSocketGroup`, `ContainersTimeouts` |
 | `.gc` | `ImageKeepRules`, `VolumeClassifier` — pure GC decisions over driver answers |
@@ -112,11 +112,47 @@ Its argvs live here too, element for element as that service renders them:
   `logsTailByReference`, `rm(binary, List)`, and `SwarmArgv.nodeInspect`, `configInspect` and the
   two-argument `serviceInspect`. It is looser than `requireContainerName`, which stays the belt on
   a name this library gives a container. `requireFullId` (64 lowercase hex) guards an exec target.
-- **`InteractiveArgv` is the one sanctioned exception** to "no `--rm`" and "one `exec`": `run`
+- **`InteractiveArgv` is a sanctioned exception** to "no `--rm`" and "one `exec`": `run`
   (`run --rm -it`, from an `InteractiveRunSpec`) and `exec` (`exec -it` on a canonical id) for
   sessions attached to the caller's pseudo-terminal, whose teardown is the caller's. Owner decision,
   2026-11-13. It is not a `ContainerSpec`, nothing in `ContainersDriver` runs it, and a PTY session
   is the embedder's to spawn — `ContainerProcess` never runs one.
+
+## Host commands of a bootstrap
+
+qits-bootstrap-cli brings a platform up on a bare host and takes it down again, and every docker
+argv it renders lives here too (qits-2212), element for element as that program renders it — its
+tests are where the expectations in `DockerArgvTest`, `SwarmArgvTest`, `ComposeArgvTest` and
+`HostRunArgvTest` were copied from.
+
+- **`HostRunArgv` is the second sanctioned exception to "no `--rm`"**, under the same owner decision
+  (2026-11-13): it renders a `HostRunSpec` as `run -d --name N ...`, `run --rm ...` or
+  `create ...`. The `--rm` runs are one-shot helpers (a probe, a `buildctl build`, a file written
+  onto a volume, an `nsenter` into the host) and the attached payload run whose exit code is the
+  program's, and their teardown is docker's `--rm`: no registry row names them and nothing adopts
+  them. It is not a `ContainerSpec` and not an `InteractiveRunSpec`.
+- **Its options are an ordered list.** The argvs it was cut to disagree on flag order, and each is
+  pinned by a test, so every builder call appends one typed option (`network`, `volume`, `env`,
+  `envName` — a variable by NAME, its value in the docker CLI's environment —, `label`, `publish`,
+  `user`, `memory`, ...) and the argv renders them in call order. Spelling and belt per option are
+  the library's; only the sequence is the caller's.
+- **The rest are builders beside their siblings**: `DockerArgv.inspect`/`inspectTypeContainer`/
+  `imageInspect`/`networkInspect(binary, network, format)` (the short `-f`), `ps(binary, all,
+  filters, format)`, `images`, `logsSince`, `startByReference`, `startAttached` (`start -a`),
+  `rmStopped` (`rm` without `-f`), `rmiForce`, `tag`, `load`, `build`, `cpIn`/`cpOut`,
+  `push`/`pull` with docker's global `--config <dir>` before the verb, `volumeCreate(binary,
+  name)`, `volumeInspect`, `volumeLsDanglingShort`, `networkDisconnect`, a belted `networkRm`,
+  `buildxLs`/`buildxRm`; `SwarmArgv.swarmInit`, `stackDeploy` (`--resolve-image never -c`),
+  `stackRm`, `secretInspect`, `secretCreateFromStdin` (`secret create <n> -`), `serviceEnvAdd`
+  (one change, no `--detach`) and a belted `serviceRmReferences`; `ComposeArgv.version` and `down`.
+  Host paths, `--since`, publishes and resource bounds are belted by the package-private
+  `HostArgvBelts`; names a person or a listing produced go through `requireReference`.
+- **`ContainerProcess.stream`** is that program's process host: every line of the merged output is
+  handed raw to a callback as it is read (masking and cleaning are the caller's), stdin text is
+  written on its own thread, the deadline is mandatory and force-kills (`timedOut`, exit -1), a
+  binary that cannot start is exit 127 with `cannot start <argv0>: <reason>` as a line, and an
+  interrupt kills and reaps exactly as `run` does (qits-894). Nothing is kept, so nothing needs a
+  bound; `output` carries only that diagnosis or `interrupted`.
 
 ## Building
 

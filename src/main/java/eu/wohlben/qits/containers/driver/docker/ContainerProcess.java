@@ -1,14 +1,18 @@
 package eu.wohlben.qits.containers.driver.docker;
 
+import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 /**
  * This service's own tiny process shell-out — the {@code CiProcess} / {@code PdProcess} shape,
@@ -41,6 +45,9 @@ import java.util.concurrent.TimeUnit;
  * whose program the embedder picks from its own closed set, whose target is a canonical id the
  * daemon printed, and whose teardown is the caller's. Those argvs are never run through this class
  * — a PTY session has no deadline and no output bound, which is exactly what this class refuses.
+ * {@link HostRunArgv}'s one-shot {@code run --rm} helpers (qits-2212) are a different matter: they
+ * have a deadline and an end, and they run through {@link #stream}; its attached payload run, whose
+ * terminal is inherited, is spawned by its embedder and never here.
  *
  * <p><b>Every entry point takes both a timeout and a bound.</b> That is the whole
  * design, and it is the repository's second invariant (AGENTS.md): a docker call with no deadline is
@@ -70,6 +77,18 @@ import java.util.concurrent.TimeUnit;
  * it rather than cut silently; stderr keeps the merged entry's bounded tail, because docker's
  * diagnosis is a line. Both pipes are drained concurrently to their end whatever is kept, so a child
  * never blocks on a full pipe, and the deadline is mandatory and force-kills exactly as above.
+ *
+ * <p><b>The fourth entry point, {@link #stream}, keeps nothing at all</b>, and that is how it
+ * honours the bound rather than an exception to it: each line of the merged output is handed to the
+ * caller's callback as it is read, so what is held — a line on screen, a log, a capped list — is the
+ * caller's to bound, and this class holds no buffer to grow. It exists for qits-bootstrap-cli
+ * (qits-2212), whose four-hour {@code buildctl build} and {@code start -a} seed builds are read out
+ * line by line to a console and a run log, and some of whose commands take a value on stdin (a
+ * {@code secret create <name> -}, a credential written onto a volume). It also takes a working
+ * directory, an environment and stdin text; the deadline is mandatory and force-kills, an interrupt
+ * kills and reaps as above, and a binary that cannot be started is exit 127. That program runs its
+ * git through the same entry point — one process host per embedder — which is why {@link #stream}
+ * is not documented as docker-only.
  */
 public final class ContainerProcess {
 
@@ -168,6 +187,129 @@ public final class ContainerProcess {
         process.destroyForcibly();
       }
     }
+  }
+
+  /**
+   * Run the argv and hand every line of its merged output to {@code line} as it is read — see the
+   * class javadoc's last paragraph.
+   *
+   * <p>What the {@link Result} says:
+   *
+   * <ul>
+   *   <li>the command ran to its end: its exit code, {@code output} empty, nothing timed out;
+   *   <li>the deadline passed: the child is force-killed and reaped, {@code exitCode} -1 and {@code
+   *       timedOut} true — the caller says so in its own words;
+   *   <li>it could not be started at all (the binary is missing, the directory is not one): exit
+   *       {@code 127}, the shell's own number for it, and the message {@code cannot start <argv0>:
+   *       <reason>} both delivered as a line and returned as {@code output};
+   *   <li>the calling thread was interrupted (before or during): the child is force-killed and
+   *       reaped exactly as {@link #run} does it (qits-894), the interrupt flag is set again, exit
+   *       -1 and {@code output} {@code interrupted}.
+   * </ul>
+   *
+   * <p>{@code output} never carries the command's output — every line went to {@code line}, and
+   * keeping a copy would be the unbounded capture this class refuses. {@code truncated} is always
+   * false.
+   *
+   * <p>Lines are split as {@link BufferedReader#readLine} splits them, decoded as UTF-8 and handed
+   * over raw: no trimming, no ANSI cleaning, no masking — those are the caller's, who knows which
+   * values are secrets. They arrive on one reader thread, in order, and every one of them has been
+   * delivered before this returns, unless a descendant of the child keeps the pipe open past five
+   * seconds after the child exited (then the rest arrive late, on that thread). A read failure is
+   * delivered as {@code output stream ended: <reason>}.
+   *
+   * @param cwd working directory, or null for this process's own
+   * @param argv the command, already assembled element by element — never a shell string
+   * @param env variables to ADD to this process's own environment, or null; never a replacement
+   * @param stdin text written to the child's stdin on its own thread, UTF-8, then closed — or null
+   *     to close stdin at once, so a child waiting on input sees EOF
+   * @param timeout the hard deadline; mandatory
+   * @param line receives each line; null discards them
+   */
+  public static Result stream(
+      Path cwd,
+      List<String> argv,
+      Map<String, String> env,
+      String stdin,
+      Duration timeout,
+      Consumer<String> line) {
+    if (timeout == null) {
+      throw new IllegalArgumentException("A deadline is mandatory");
+    }
+    Consumer<String> sink = line == null ? ignored -> {} : line;
+    ProcessBuilder pb = new ProcessBuilder(argv);
+    if (cwd != null) {
+      pb.directory(cwd.toFile());
+    }
+    if (env != null && !env.isEmpty()) {
+      pb.environment().putAll(env);
+    }
+    pb.redirectErrorStream(true);
+    Process process;
+    try {
+      process = pb.start();
+    } catch (IOException e) {
+      String message = "cannot start " + argv.getFirst() + ": " + e.getMessage();
+      sink.accept(message);
+      return new Result(127, message, false, false);
+    }
+    try {
+      feed(process, stdin);
+      Thread reader =
+          Thread.startVirtualThread(
+              () -> {
+                try (BufferedReader lines =
+                    new BufferedReader(
+                        new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                  String raw;
+                  while ((raw = lines.readLine()) != null) {
+                    sink.accept(raw);
+                  }
+                } catch (IOException e) {
+                  sink.accept("output stream ended: " + e.getMessage());
+                }
+              });
+      boolean finished = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
+      if (!finished) {
+        process.destroyForcibly();
+        process.waitFor();
+      }
+      // A join, not a race: the last lines are the ones a failure is diagnosed by.
+      reader.join(TimeUnit.SECONDS.toMillis(5));
+      return new Result(finished ? process.exitValue() : -1, "", !finished, false);
+    } catch (InterruptedException e) {
+      killAndReap(process);
+      Thread.currentThread().interrupt();
+      return new Result(-1, "interrupted", false, false);
+    } finally {
+      if (process.isAlive()) {
+        process.destroyForcibly();
+      }
+    }
+  }
+
+  /**
+   * stdin on its own thread: a text larger than the pipe buffer, written by the thread that also
+   * waits on a child that is already printing, would deadlock against it. A null text closes stdin
+   * at once.
+   */
+  private static void feed(Process process, String stdin) {
+    if (stdin == null) {
+      try {
+        process.getOutputStream().close();
+      } catch (IOException ignored) {
+        // already gone is as good as closed
+      }
+      return;
+    }
+    Thread.startVirtualThread(
+        () -> {
+          try (OutputStream out = process.getOutputStream()) {
+            out.write(stdin.getBytes(StandardCharsets.UTF_8));
+          } catch (IOException ignored) {
+            // a child that stops reading before the text ends is its own business
+          }
+        });
   }
 
   /**

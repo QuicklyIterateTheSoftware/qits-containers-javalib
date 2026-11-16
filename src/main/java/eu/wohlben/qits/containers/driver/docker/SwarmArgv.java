@@ -202,6 +202,33 @@ public final class SwarmArgv {
   }
 
   /**
+   * {@code service update (--env-add K=V)* <service>} — only the environment, and without {@code
+   * --detach}: the CLI waits for the service to converge, which is the caller's whole question
+   * (qits-bootstrap-cli releasing a seed service's self-seed, qits-2212). Not {@link
+   * #serviceUpdate}, which restates a spec; this states one change. The service is a belted
+   * reference; each entry is {@code K=V} with a POSIX-shaped key. An empty list is refused.
+   */
+  public static List<String> serviceEnvAdd(
+      String runtimeBinary, String service, List<String> env) {
+    if (env == null || env.isEmpty()) {
+      throw new IllegalArgumentException("Invalid service env-add: no variable");
+    }
+    List<String> argv = new ArrayList<>(List.of(runtimeBinary, "service", "update"));
+    for (String entry : env) {
+      int split = entry == null ? -1 : entry.indexOf('=');
+      if (split <= 0) {
+        throw new IllegalArgumentException(
+            "Invalid environment entry: " + ContainersIdentifiers.safely(entry));
+      }
+      ContainersIdentifiers.requireEnvKey(entry.substring(0, split));
+      argv.add("--env-add");
+      argv.add(entry);
+    }
+    argv.add(ContainersIdentifiers.requireReference("service", service));
+    return List.copyOf(argv);
+  }
+
+  /**
    * {@code service inspect [--format <template>] <service>}. A null format states none — the
    * daemon's own document, a JSON array.
    */
@@ -288,6 +315,52 @@ public final class SwarmArgv {
     return List.copyOf(argv);
   }
 
+  /**
+   * {@link #serviceRm(String, List)}, with every name belted as a {@link
+   * ContainersIdentifiers#requireReference reference} — for names an embedder read off a listing
+   * and must not hand on unchecked (qits-bootstrap-cli's unwrap, qits-2212).
+   */
+  public static List<String> serviceRmReferences(String runtimeBinary, List<String> services) {
+    if (services == null || services.isEmpty()) {
+      throw new IllegalArgumentException("Invalid service rm: no service named");
+    }
+    List<String> argv = new ArrayList<>(List.of(runtimeBinary, "service", "rm"));
+    for (String service : services) {
+      argv.add(ContainersIdentifiers.requireReference("service", service));
+    }
+    return List.copyOf(argv);
+  }
+
+  // --- the swarm itself, and stacks (qits-bootstrap-cli, qits-2212) ------------------------------
+
+  /** {@code swarm init} — this daemon becomes a single-node swarm's manager. */
+  public static List<String> swarmInit(String runtimeBinary) {
+    return List.of(runtimeBinary, "swarm", "init");
+  }
+
+  /**
+   * {@code stack deploy --resolve-image never -c <file> <stack>}. {@code never} because the images
+   * a bootstrap deploys are on this daemon and nowhere a registry could be asked about yet; no
+   * {@code --prune}, because what the file leaves out is somebody else's to remove.
+   */
+  public static List<String> stackDeploy(String runtimeBinary, String composeFile, String stack) {
+    return List.of(
+        runtimeBinary,
+        "stack",
+        "deploy",
+        "--resolve-image",
+        "never",
+        "-c",
+        HostArgvBelts.requireHostPath("stack file", composeFile),
+        ContainersIdentifiers.requireReference("stack", stack));
+  }
+
+  /** {@code stack rm <stack>}. */
+  public static List<String> stackRm(String runtimeBinary, String stack) {
+    return List.of(
+        runtimeBinary, "stack", "rm", ContainersIdentifiers.requireReference("stack", stack));
+  }
+
   // --- nodes, configs and secrets ----------------------------------------------------------------
 
   /** {@code node ls [--format <template>]}. */
@@ -320,13 +393,35 @@ public final class SwarmArgv {
   }
 
   /**
-   * {@code secret ls [--format <template>]}. A listing only: there is no {@code secret inspect}
-   * here, and a secret's value is something no docker command prints anyway.
+   * {@code secret ls [--format <template>]}. A listing; a secret's value is something no docker
+   * command prints anyway.
    */
   public static List<String> secretLs(String runtimeBinary, String format) {
     List<String> argv = new ArrayList<>(List.of(runtimeBinary, "secret", "ls"));
     format(argv, format);
     return List.copyOf(argv);
+  }
+
+  /**
+   * {@code secret inspect <name>} — whether a secret exists (exit zero); its document carries no
+   * value. The name is a belted reference.
+   */
+  public static List<String> secretInspect(String runtimeBinary, String name) {
+    return List.of(
+        runtimeBinary, "secret", "inspect", ContainersIdentifiers.requireReference("secret", name));
+  }
+
+  /**
+   * {@code secret create <name> -} — the value read from STDIN, so it is on no command line. The
+   * caller feeds it ({@link ContainerProcess#stream} takes a stdin text) and masks it.
+   */
+  public static List<String> secretCreateFromStdin(String runtimeBinary, String name) {
+    return List.of(
+        runtimeBinary,
+        "secret",
+        "create",
+        ContainersIdentifiers.requireReference("secret", name),
+        "-");
   }
 
   // --- overlay networks -------------------------------------------------------------------------

@@ -29,10 +29,19 @@ the jar.
 - **`SwarmArgv`'s flag order is qits-deployments-service's.** `SwarmArgvTest` copies its expected
   argvs from that service; reordering a flag is a changed command on every deployment it issues.
   `SwarmIdentifiers` belts may never be narrower than what that service renders today.
-- **`--rm` and `exec -it` live in `InteractiveArgv` only** (owner, 2026-11-13, qits-2211): attached
-  terminal sessions whose teardown is the caller's. `DockerArgv`, `ContainersDriver` and
-  `ContainerSpec` still render neither; its flag order is qits-system-service's, pinned by
-  `InteractiveArgvTest`.
+- **`--rm` lives in `InteractiveArgv` and `HostRunArgv` only, `exec -it` in `InteractiveArgv`
+  only** (owner, 2026-11-13). `InteractiveArgv` (qits-2211): attached terminal sessions whose
+  teardown is the caller's, flag order qits-system-service's, pinned by `InteractiveArgvTest`.
+  `HostRunArgv` (qits-2212): an embedder's one-shot helpers and its attached payload run, whose
+  teardown is docker's `--rm`, rendered from a `HostRunSpec` whose options keep the caller's order;
+  flag spellings are qits-bootstrap-cli's, pinned by `HostRunArgvTest`. `DockerArgv`,
+  `ContainersDriver` and `ContainerSpec` still render neither. A third exception is an owner
+  decision, not a refactor.
+- **qits-bootstrap-cli's argvs are pinned like the deployer's.** The builders added for it in
+  `DockerArgv`, `SwarmArgv` and `ComposeArgv` (qits-2212) have their expectations copied from that
+  program's tests; a changed element is a changed command on every bootstrap.
+- **`ContainerProcess.stream` keeps nothing.** Lines go to the caller's callback raw, so the bound is
+  the caller's; never add a capture to it — use `run` for a bounded capture.
 - **Packages stay under `eu.wohlben.qits.containers.driver`.** No split package with CS.
 - **Tests are plain JUnit 5 and need no docker.**
 

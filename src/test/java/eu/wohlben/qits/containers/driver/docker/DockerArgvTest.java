@@ -564,6 +564,213 @@ public class DockerArgvTest {
     assertThrows(IllegalArgumentException.class, () -> SwarmArgv.serviceInspect("docker", ""));
   }
 
+  // --- qits-bootstrap-cli's commands (qits-2212) ----------------------------------------------
+  //
+  // Each expectation is the argv qits-bootstrap-cli renders today, copied from its tests where they
+  // pin it (DockerBuildTest, DockerNetworkTest) and from the source line otherwise (cited).
+
+  /** {@code Docker} :128, :157, :177, :207, :256, :272, :278, :284, :299 — the reads. */
+  @Test
+  public void theBootstrapReadsAreTheClisElementForElement() {
+    assertEquals(List.of("docker", "version"), DockerArgv.version("docker", null));
+    // DockerNetworkTest :81-82.
+    assertEquals(
+        List.of("docker", "info", "--format", "{{.Swarm.LocalNodeState}} {{.Swarm.ControlAvailable}}"),
+        DockerArgv.info("docker", "{{.Swarm.LocalNodeState}} {{.Swarm.ControlAvailable}}"));
+    assertEquals(
+        List.of("docker", "image", "inspect", "-f", "{{.Id}}", "qits/ci:latest"),
+        DockerArgv.imageInspect("docker", "qits/ci:latest", "{{.Id}}"));
+    assertEquals(
+        List.of("docker", "inspect", "--type", "container", "-f", "{{.Name}}", "0123456789ab"),
+        DockerArgv.inspectTypeContainer("docker", "0123456789ab", "{{.Name}}"));
+    String networks = "{{range $net, $_ := .NetworkSettings.Networks}}{{$net}} {{end}}";
+    assertEquals(
+        List.of("docker", "inspect", "-f", networks, "qits-bootstrap-progress"),
+        DockerArgv.inspect("docker", "qits-bootstrap-progress", networks));
+    assertEquals(
+        List.of("docker", "network", "inspect", "-f", "{{.Driver}}", "qits-net"),
+        DockerArgv.networkInspect("docker", "qits-net", "{{.Driver}}"));
+    // Docker :407, :412, :417 — the existing ps renders them.
+    assertEquals(
+        List.of("docker", "ps", "-a", "--format", "{{.Names}}"),
+        DockerArgv.ps("docker", true, false, "{{.Names}}"));
+    // PipelinePhases :2849-2851, UnwrapPhases :494-495, BootstrapIngressLifecycle :196-197.
+    assertEquals(
+        List.of(
+            "docker", "ps", "-a", "--filter", "label=qits.system.runner.process=7c1d2f0e",
+            "--format", "{{.Names}} {{.State}}"),
+        DockerArgv.ps(
+            "docker",
+            true,
+            List.of("label=qits.system.runner.process=7c1d2f0e"),
+            "{{.Names}} {{.State}}"));
+    // Docker :435.
+    assertEquals(
+        List.of(
+            "docker", "logs", "--timestamps", "--since", "2026-11-16T10:00:00Z", "qits_qits-ci.1.x"),
+        DockerArgv.logsSince("docker", "qits_qits-ci.1.x", "2026-11-16T10:00:00Z"));
+    // UnwrapPhases :434.
+    assertEquals(
+        List.of("docker", "images", "--format", "{{.Repository}}:{{.Tag}}"),
+        DockerArgv.images("docker", "{{.Repository}}:{{.Tag}}"));
+    // Docker :818, :888.
+    assertEquals(List.of("docker", "buildx", "ls"), DockerArgv.buildxLs("docker"));
+    assertEquals(
+        List.of("docker", "volume", "ls", "-q", "-f", "dangling=true"),
+        DockerArgv.volumeLsDanglingShort("docker"));
+    // UnwrapPhases :297 — the existing label listing with no labels.
+    assertEquals(List.of("docker", "volume", "ls", "-q"), DockerArgv.volumeLs("docker", Map.of()));
+    // PipelinePhases :2889.
+    assertEquals(
+        List.of("docker", "volume", "inspect", "qits-system-runner-state-7c1d2f0e"),
+        DockerArgv.volumeInspect("docker", "qits-system-runner-state-7c1d2f0e"));
+  }
+
+  /** The containers a bootstrap creates, fills, starts attached and removes. */
+  @Test
+  public void theBootstrapContainerLifecycleIsTheClisElementForElement() {
+    String cid = "4f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b";
+    // SeedPhases :4772 and :4781 (cp in), :2828 (cp out).
+    assertEquals(
+        List.of("docker", "cp", "/src/.exports/qits-runner@1/.", cid + ":/src@1"),
+        DockerArgv.cpIn("docker", "/src/.exports/qits-runner@1/.", cid, "/src@1"));
+    assertEquals(
+        List.of("docker", "cp", cid + ":/qits", "/w/.qits-bootstrap/qits"),
+        DockerArgv.cpOut("docker", cid, "/qits", "/w/.qits-bootstrap/qits"));
+    // SeedPhases :4786, :4791.
+    assertEquals(List.of("docker", "start", "-a", cid), DockerArgv.startAttached("docker", cid));
+    assertEquals(List.of("docker", "rm", cid), DockerArgv.rmStopped("docker", cid));
+    // Docker :425 / UnwrapPhases :231 — rm -f through the reference-belted list form.
+    assertEquals(List.of("docker", "rm", "-f", cid), DockerArgv.rm("docker", List.of(cid)));
+    // PipelinePhases :2865 — a name read off ps, with the version's dots.
+    assertEquals(
+        List.of("docker", "start", "qits-system-runner-7c1d2f0e-2026.1023.112622"),
+        DockerArgv.startByReference("docker", "qits-system-runner-7c1d2f0e-2026.1023.112622"));
+    // Docker :748.
+    assertEquals(
+        List.of("docker", "start", "qits-buildkitd"), DockerArgv.start("docker", "qits-buildkitd"));
+    // PipelinePhases :3410.
+    assertEquals(
+        List.of("docker", "logs", "--tail", "20", "qits-system-runner-7c1d2f0e-2026.1023.112622"),
+        DockerArgv.logsTailByReference(
+            "docker", "qits-system-runner-7c1d2f0e-2026.1023.112622", 20));
+  }
+
+  /** The images a bootstrap builds, tags, loads, pushes and pulls. */
+  @Test
+  public void theBootstrapImageCommandsAreTheClisElementForElement() {
+    // DockerBuildTest :188 (paths filled in) and :342-343.
+    assertEquals(
+        List.of("docker", "load", "-i", "/tmp/qits-scratch/image-1/image.tar"),
+        DockerArgv.load("docker", "/tmp/qits-scratch/image-1/image.tar"));
+    assertEquals(
+        List.of(
+            "docker", "build", "-f", "/src/cli/docker/Dockerfile", "-t", "qits-bootstrap:abc",
+            "/src/cli"),
+        DockerArgv.build("docker", "/src/cli/docker/Dockerfile", "qits-bootstrap:abc", "/src/cli"));
+    // SeedPhases :1266-1268.
+    assertEquals(
+        List.of(
+            "docker", "tag", "qits/build-images/ci-slot:latest",
+            "registry.qits.qits-dev.eu/qits/build-images/ci-slot:latest"),
+        DockerArgv.tag(
+            "docker",
+            "qits/build-images/ci-slot:latest",
+            "registry.qits.qits-dev.eu/qits/build-images/ci-slot:latest"));
+    // PipelinePhases :917 and :3301 — the global --config BEFORE the verb (PipelinePhasesTest
+    // :1619-1622 pins five elements: docker --config <dir> push <ref>).
+    String ref = "registry.qits.qits-dev.eu/qits/build-images/ci-base:latest";
+    assertEquals(
+        List.of("docker", "--config", "/tmp/qits-push-1", "push", ref),
+        DockerArgv.push("docker", "/tmp/qits-push-1", ref));
+    assertEquals(
+        List.of("docker", "--config", "/tmp/qits-pull-1", "pull", ref),
+        DockerArgv.pull("docker", "/tmp/qits-pull-1", ref));
+    assertEquals(List.of("docker", "push", ref), DockerArgv.push("docker", null, ref));
+    assertEquals(DockerArgv.pull("docker", ref), DockerArgv.pull("docker", null, ref));
+    // UnwrapPhases :445 — forced, one reference per call there.
+    assertEquals(
+        List.of("docker", "rmi", "-f", "qits/ci:latest"),
+        DockerArgv.rmiForce("docker", List.of("qits/ci:latest")));
+    // Docker :871.
+    assertEquals(
+        List.of("docker", "buildx", "rm", "qits-bootstrap-builder-v4"),
+        DockerArgv.buildxRm("docker", "qits-bootstrap-builder-v4"));
+  }
+
+  /** The volumes and networks a bootstrap makes and an unwrap takes away. */
+  @Test
+  public void theBootstrapVolumeAndNetworkCommandsAreTheClisElementForElement() {
+    // DockerBuildTest :88.
+    assertEquals(
+        List.of("docker", "volume", "create", "qits-buildkitd-state"),
+        DockerArgv.volumeCreate("docker", "qits-buildkitd-state"));
+    assertEquals(
+        List.of("docker", "volume", "rm", "qits_shared_m2"),
+        DockerArgv.volumeRm("docker", "qits_shared_m2"));
+    // SeedPhases :418 / BootstrapIngressLifecycle :104.
+    assertEquals(
+        List.of("docker", "network", "connect", "qits-net", "0123456789ab"),
+        DockerArgv.networkConnect("docker", "qits-net", "0123456789ab"));
+    // UnwrapPhases :360-361.
+    assertEquals(
+        List.of("docker", "network", "disconnect", "qits-net", "qits-bootstrap-progress"),
+        DockerArgv.networkDisconnect("docker", "qits-net", "qits-bootstrap-progress"));
+    // UnwrapPhases :406.
+    assertEquals(
+        List.of("docker", "network", "rm", "qits_default"),
+        DockerArgv.networkRm("docker", "qits_default"));
+  }
+
+  @Test
+  public void theBootstrapCommandsBeltWhatTheyAreHanded() {
+    assertThrows(
+        IllegalArgumentException.class, () -> DockerArgv.imageInspect("docker", "-x", "{{.Id}}"));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> DockerArgv.inspectTypeContainer("docker", "a b", "{{.Id}}"));
+    assertThrows(
+        IllegalArgumentException.class, () -> DockerArgv.inspect("docker", "--all", "{{.Id}}"));
+    assertThrows(
+        IllegalArgumentException.class, () -> DockerArgv.networkInspect("docker", "a:b", "x"));
+    assertThrows(
+        IllegalArgumentException.class, () -> DockerArgv.ps("docker", true, List.of("a\nb"), null));
+    assertThrows(
+        IllegalArgumentException.class, () -> DockerArgv.logsSince("docker", "x", "--follow"));
+    assertThrows(IllegalArgumentException.class, () -> DockerArgv.startAttached("docker", "-x"));
+    assertThrows(IllegalArgumentException.class, () -> DockerArgv.startByReference("docker", "a/b"));
+    assertThrows(IllegalArgumentException.class, () -> DockerArgv.rmStopped("docker", "-f"));
+    assertThrows(IllegalArgumentException.class, () -> DockerArgv.tag("docker", "a", "-b"));
+    assertThrows(IllegalArgumentException.class, () -> DockerArgv.load("docker", "-i"));
+    assertThrows(IllegalArgumentException.class, () -> DockerArgv.load("docker", "evil:/x"));
+    assertThrows(IllegalArgumentException.class, () -> DockerArgv.build("docker", "f", "t", "-"));
+    assertThrows(
+        IllegalArgumentException.class, () -> DockerArgv.push("docker", "--debug", "a/b:c"));
+    assertThrows(IllegalArgumentException.class, () -> DockerArgv.pull("docker", "/d", "a b"));
+    assertThrows(
+        IllegalArgumentException.class, () -> DockerArgv.cpIn("docker", "/h", "c", "rel"));
+    assertThrows(
+        IllegalArgumentException.class, () -> DockerArgv.cpIn("docker", "/h", "c", "/a:b"));
+    assertThrows(
+        IllegalArgumentException.class, () -> DockerArgv.cpOut("docker", "-c", "/a", "/h"));
+    assertThrows(IllegalArgumentException.class, () -> DockerArgv.cpOut("docker", "c", "/a", ""));
+    assertThrows(IllegalArgumentException.class, () -> DockerArgv.rmiForce("docker", List.of()));
+    assertThrows(
+        IllegalArgumentException.class, () -> DockerArgv.rmiForce("docker", List.of("-a")));
+    assertThrows(IllegalArgumentException.class, () -> DockerArgv.buildxRm("docker", "-f"));
+    assertThrows(IllegalArgumentException.class, () -> DockerArgv.volumeCreate("docker", "a/b"));
+    assertThrows(IllegalArgumentException.class, () -> DockerArgv.volumeInspect("docker", "-v"));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> DockerArgv.networkDisconnect("docker", "net", "-f"));
+    assertThrows(IllegalArgumentException.class, () -> DockerArgv.networkRm("docker", "-f"));
+    // A relative host path is fine where it carries no colon, and a colon is fine on an absolute or
+    // dot-relative path: docker's own rule for telling a local path from container:path.
+    assertEquals("./a:b", DockerArgv.load("docker", "./a:b").getLast());
+    assertEquals("/a:b", DockerArgv.load("docker", "/a:b").getLast());
+    assertEquals("image.tar", DockerArgv.load("docker", "image.tar").getLast());
+  }
+
   @Test
   public void listingsRenderOneFilterPerLabelInASortedOrder() {
     assertEquals(
