@@ -40,6 +40,9 @@ the jar.
 - **A caller's plain `exec` lives in `ExecArgv` only** (owner rule 2026-11-13, qits-2289): the
   system runner's DOCKER exec relay, `exec <reference> <command...>` with no `-i`/`-t`.
   `DockerArgv`'s only `exec`s stay the constant `buildctl` ones.
+- **The runner toolkit's argvs are pinned too** (qits-2302): qits-runner-javalib's
+  `LifecycleArgvTest` and its `FakeDocker` stub hold the toolkit's spellings; `imagePruneDangling`
+  is the only `image prune` here, dangling-only, and never gains `-a`.
 - **qits-bootstrap-cli's argvs are pinned like the deployer's.** The builders added for it in
   `DockerArgv`, `SwarmArgv` and `ComposeArgv` (qits-2212) have their expectations copied from that
   program's tests; a changed element is a changed command on every bootstrap.

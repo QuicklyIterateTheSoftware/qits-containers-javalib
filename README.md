@@ -177,6 +177,21 @@ that daemon renders them:
   relay (owner rule 2026-11-13). The reference is `requireReference`d; the command is non-empty, free
   of control characters, and its first element cannot open with `-`.
 
+## Commands of the runner toolkit
+
+qits-runner-javalib's runner toolkit — `LifecycleArgv` and its housekeeping, embedded by every
+runner — renders its docker calls through this library too (qits-2302), element for element as the
+toolkit rendered them by hand:
+
+- **`DockerArgv`**: `inspect(binary, reference)` (bare `inspect`, no template),
+  `imageInspect(binary, image)` (no template), `updateRestartNo` (`update --restart=no`) and
+  `imagePruneDangling` (`image prune -f`, never `-a`: the one sanctioned prune, an embedder's
+  dangling-only pass; the service's own collection still decides image by image).
+- **`HostRunSpec.Builder.mount`** (`--mount <spec>`, verbatim, belted free of control characters
+  and a leading `-`) carries a running container's `HostConfig.Mounts` into its successor.
+- **`HostRunArgv` belts widened, never narrowed**: a label key may carry `/` (a label docker already
+  accepted on a running container), and a `-v` mode may be upper case (SELinux `:Z`).
+
 ## Building
 
     ./mvnw verify
