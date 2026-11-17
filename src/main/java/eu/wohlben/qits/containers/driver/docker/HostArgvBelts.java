@@ -29,7 +29,11 @@ final class HostArgvBelts {
   private static final Pattern PUBLISH = Pattern.compile("[0-9A-Za-z\\[][0-9A-Za-z.:\\[\\]/-]*");
   private static final Pattern USER = Pattern.compile("[a-z0-9_][a-z0-9_-]*(:[a-z0-9_][a-z0-9_-]*)?");
   private static final Pattern OPTION_KEY = Pattern.compile("[a-zA-Z0-9][a-zA-Z0-9._-]*");
-  private static final Pattern MOUNT_MODE = Pattern.compile("[a-z][a-z,]*");
+  // Widened from [a-z][a-z,]* (qits-2302) so docker's SELinux relabel mode passes: `:Z` and `:z`
+  // sit beside `ro`/`rw` in the same comma-joined field, and only the case was ever narrower than
+  // docker's own grammar. It only widens — every mode this belt already accepted still matches.
+  private static final Pattern MOUNT_MODE = Pattern.compile("[A-Za-z][A-Za-z,]*");
+  private static final Pattern LABEL_KEY = Pattern.compile("[a-zA-Z0-9][a-zA-Z0-9._/-]*");
 
   private HostArgvBelts() {}
 
@@ -143,6 +147,43 @@ final class HostArgvBelts {
       throw refuse("mount", mount);
     }
     return mount;
+  }
+
+  /**
+   * One {@code --mount} value verbatim — {@code type=volume,source=x,target=/y[,readonly]} — a
+   * mount carried from a running container's {@code HostConfig.Mounts} by the runner toolkit's
+   * successor run (qits-runner-javalib, qits-2302). Unlike {@link #requireMount}'s {@code -v}
+   * triple, docker's own long form is not this belt's to parse apart field by field — it is
+   * handed through as the caller's value and belted only as every value handed through verbatim
+   * is: not blank, no leading {@code -}, no control character (a newline could forge a second
+   * flag's worth of text into one argv element), and no longer than a path doubled, since the
+   * spec can carry two of them.
+   */
+  static String requireMountSpec(String spec) {
+    if (spec == null
+        || spec.isBlank()
+        || spec.length() > PATH_MAX * 2
+        || spec.startsWith("-")
+        || spec.chars().anyMatch(Character::isISOControl)) {
+      throw refuse("mount spec", spec);
+    }
+    return spec;
+  }
+
+  /**
+   * A label key an embedder's host run carries on a running container — docker's own {@code
+   * io.example/owner} shapes included. Wider than {@link ContainersIdentifiers#requireExtraLabelKey}
+   * by exactly {@code /} and by length (qits-2302): that belt guards a key an OWNER is about to
+   * write through a spec, where a slash would read as somebody else's reserved namespace; this one
+   * guards a label an embedder's host run carries on a container docker already accepted — a
+   * running container's labels are a fact read back, not a request being granted, so the charset
+   * only needs to be docker's own.
+   */
+  static String requireLabelKey(String key) {
+    if (key == null || key.isEmpty() || key.length() > WORD_MAX || !LABEL_KEY.matcher(key).matches()) {
+      throw refuse("label key", key);
+    }
+    return key;
   }
 
   static String requireMemory(String memory) {

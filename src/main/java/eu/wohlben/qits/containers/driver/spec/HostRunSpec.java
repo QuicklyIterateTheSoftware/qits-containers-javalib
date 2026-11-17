@@ -93,6 +93,15 @@ public record HostRunSpec(
     OOM_SCORE_ADJ,
     /** {@code -v <volume or absolute host path>:<container path>[:<mode>]}. */
     VOLUME,
+    /**
+     * {@code --mount <spec>}, e.g. {@code type=volume,source=x,target=/y[,readonly]} — a mount
+     * carried from a running container's {@code HostConfig.Mounts} by the runner toolkit's
+     * successor run (qits-runner-javalib, qits-2302), rather than rebuilt as a {@link #VOLUME}'s
+     * {@code <source>:<target>[:<mode>]}: {@code HostConfig.Mounts} prints the long form docker
+     * itself uses, and re-deriving a {@code -v} triple from it would be a second parser of the
+     * same fact.
+     */
+    MOUNT,
     /** {@code -e <key>=<value>}. */
     ENV,
     /** {@code -e <key>}: by NAME, the value copied from the docker CLI's own environment. */
@@ -227,6 +236,11 @@ public record HostRunSpec(
     /** {@code -v}: {@code <volume>:<path>[:<mode>]} or {@code <absolute host path>:<path>[:<mode>]}. */
     public Builder volume(String mount) {
       return add(Kind.VOLUME, null, mount);
+    }
+
+    /** {@code --mount <spec>} — see {@link Kind#MOUNT}. */
+    public Builder mount(String spec) {
+      return add(Kind.MOUNT, null, spec);
     }
 
     public Builder env(String key, String value) {

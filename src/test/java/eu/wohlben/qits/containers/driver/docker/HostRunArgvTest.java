@@ -661,4 +661,51 @@ public class HostRunArgvTest {
         assertThrows(IllegalArgumentException.class, () -> HostRunArgv.render("docker", spec));
     assertTrue(refused.getMessage().startsWith(message), refused.getMessage());
   }
+
+  // --- qits-runner-javalib's runner toolkit (qits-2302) ------------------------------------------
+
+  /** A {@code --mount} carried verbatim from a running container's {@code HostConfig.Mounts}. */
+  @Test
+  public void aMountOptionRendersTheLongFormVerbatim() {
+    assertEquals(
+        List.of(
+            "docker", "create", "--mount", "type=volume,source=x,target=/y,readonly", "alpine"),
+        HostRunArgv.render(
+            "docker",
+            HostRunSpec.created("alpine")
+                .mount("type=volume,source=x,target=/y,readonly")
+                .build()));
+    assertEquals(
+        List.of("docker", "create", "--mount", "type=volume,source=x,target=/y", "alpine"),
+        HostRunArgv.render(
+            "docker", HostRunSpec.created("alpine").mount("type=volume,source=x,target=/y").build()));
+  }
+
+  @Test
+  public void aMountOptionRefusesALeadingDashOrAControlCharacter() {
+    refused(HostRunSpec.created("alpine").mount("-x").build(), "Invalid mount spec");
+    refused(HostRunSpec.created("alpine").mount("type=volume,source=x\ntarget=/y").build(), "Invalid mount spec");
+    refused(HostRunSpec.created("alpine").mount(null).build(), "Invalid mount spec");
+    refused(HostRunSpec.created("alpine").mount("").build(), "Invalid mount spec");
+  }
+
+  @Test
+  public void aWidenedLabelKeyIsDockersOwnShapeAndABindsSelinuxModePasses() {
+    // The label key: wider than ContainersIdentifiers.requireExtraLabelKey by exactly `/` and by
+    // length, because a host run carries labels docker already accepted on a running container.
+    assertEquals(
+        List.of("docker", "run", "--rm", "--label", "io.example/owner=team-a", "alpine"),
+        HostRunArgv.render(
+            "docker", HostRunSpec.removed("alpine").label("io.example/owner", "team-a").build()));
+    // The mount mode: widened to accept docker's SELinux relabel letters beside ro/rw.
+    assertEquals(
+        List.of("docker", "run", "--rm", "-v", "/a:/b:ro,Z", "alpine"),
+        HostRunArgv.render("docker", HostRunSpec.removed("alpine").volume("/a:/b:ro,Z").build()));
+  }
+
+  @Test
+  public void aLabelKeyStillRefusesWhitespaceAndALeadingDash() {
+    refused(HostRunSpec.removed("alpine").label("a b", "v").build(), "Invalid label key");
+    refused(HostRunSpec.removed("alpine").label("-a", "v").build(), "Invalid label key");
+  }
 }

@@ -601,6 +601,19 @@ public final class DockerArgv {
   }
 
   /**
+   * {@code inspect <reference>} — the bare inspect with no format at all, so the answer is the
+   * daemon's own document rather than a template's narrowing of it. qits-runner-javalib's runner
+   * toolkit (qits-2302), {@code LifecycleArgv.inspectSelf}: the runner's whole container document,
+   * read this way because a Go template refuses to render a key the container's shape omits (
+   * {@code HostConfig.Mounts} is absent on a container started with {@code -v} binds only), where
+   * the reader parses the document defensively instead.
+   */
+  public static List<String> inspect(String runtimeBinary, String reference) {
+    return List.of(
+        runtimeBinary, "inspect", ContainersIdentifiers.requireReference(reference));
+  }
+
+  /**
    * Start the container that already carries this name. It takes no spec and no flag: everything a
    * container is was decided by the {@link #run} that created it, and a start that could re-state
    * any of it would be a second place for the sandbox to be written.
@@ -649,6 +662,17 @@ public final class DockerArgv {
         "-t",
         String.valueOf(seconds),
         ContainersIdentifiers.requireReference(reference));
+  }
+
+  /**
+   * {@code update --restart=no <reference>} — take the restart policy off a container, so the
+   * exit it is about to make is its last. qits-runner-javalib's runner toolkit (qits-2302), {@code
+   * LifecycleArgv.noRestart}: the retiring runner's own step out of the way of its successor,
+   * before it removes itself.
+   */
+  public static List<String> updateRestartNo(String runtimeBinary, String reference) {
+    return List.of(
+        runtimeBinary, "update", "--restart=no", ContainersIdentifiers.requireReference(reference));
   }
 
   /** Remove it, running or not. Every teardown ends here, and never at a {@code --rm}. */
@@ -1313,6 +1337,17 @@ public final class DockerArgv {
   }
 
   /**
+   * {@code image inspect <image>} — no format, so the daemon's own document. qits-runner-javalib's
+   * runner toolkit (qits-2302), {@code LifecycleArgv.imageConfig}: the image the runner's own
+   * container was started from, whole — see {@link #inspect(String, String)} for why this family
+   * of reads takes no template.
+   */
+  public static List<String> imageInspect(String runtimeBinary, String imageRef) {
+    return List.of(
+        runtimeBinary, "image", "inspect", ContainersIdentifiers.requireImage(imageRef));
+  }
+
+  /**
    * {@code image inspect --format <template> <image>} — {@link #imageInspect} with the long {@code
    * --format}: qits-system-runner-daemon's spelling (qits-2289), which asks whether its builder
    * image, or a lease's, is on the node.
@@ -1359,9 +1394,14 @@ public final class DockerArgv {
    * references ({@code projects-daemon:2026.820.154053} beside {@code projects-daemon:863933e…}).
    * A tagged image is removed by {@link #imageRmRefs} instead.
    *
-   * <p>And there is no {@code image prune} anywhere in this file. A prune is docker deciding; the
-   * whole point of the sweep above it is that this service decides, image by image, with the rows
-   * and the pins in front of it.
+   * <p><b>{@link #imagePruneDangling} is the one sanctioned exception to "no {@code image prune}
+   * anywhere in this file"</b>, and it is sanctioned for the opposite reason a prune is usually
+   * refused here: a prune is docker deciding, and the whole point of the sweep above is that this
+   * SERVICE decides, image by image, with the rows and the pins in front of it. What {@link
+   * #imagePruneDangling} renders is an EMBEDDER's own prune — qits-runner-javalib's runner toolkit
+   * (qits-2302), {@code DanglingImagesPass} — never {@code -a}, so it can only take an image no
+   * container anywhere uses; the service's own collection keeps deciding image by image and never
+   * prunes.
    */
   public static List<String> imageRm(String runtimeBinary, String id) {
     return List.of(runtimeBinary, "image", "rm", ContainersIdentifiers.requireImageId(id));
@@ -1406,6 +1446,17 @@ public final class DockerArgv {
       argv.add(ContainersIdentifiers.requireImage(reference));
     }
     return List.copyOf(argv);
+  }
+
+  /**
+   * {@code image prune -f} — dangling images only, and never {@code -a}: see {@link #imageRm} for
+   * why this is the sanctioned exception to this file's rule against a prune. qits-runner-javalib's
+   * runner toolkit (qits-2302), {@code DanglingImagesPass}: an embedder's own housekeeping pass,
+   * which may only take an image no container anywhere uses, never one this service's own
+   * collection is still deciding about.
+   */
+  public static List<String> imagePruneDangling(String runtimeBinary) {
+    return List.of(runtimeBinary, "image", "prune", "-f");
   }
 
   /** Volumes no container references — the only volumes a collection may even consider. */

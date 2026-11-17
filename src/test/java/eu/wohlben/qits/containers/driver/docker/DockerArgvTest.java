@@ -1534,4 +1534,44 @@ public class DockerArgvTest {
           String.valueOf(hostile));
     }
   }
+
+  // --- qits-runner-javalib's runner toolkit (qits-2302) ------------------------------------------
+
+  @Test
+  public void inspectWithNoFormatIsTheRunnersWholeContainerDocument() {
+    // LifecycleArgv.inspectSelf: no --format at all, so the answer is the daemon's own document
+    // rather than a template's narrowing of it (a Go template refuses to render a key the
+    // container's shape omits).
+    assertEquals(List.of("docker", "inspect", "c"), DockerArgv.inspect("docker", "c"));
+    assertThrows(IllegalArgumentException.class, () -> DockerArgv.inspect("docker", "-x"));
+    assertThrows(IllegalArgumentException.class, () -> DockerArgv.inspect("docker", "a\nb"));
+  }
+
+  @Test
+  public void imageInspectWithNoFormatIsTheRunnersImageConfig() {
+    // LifecycleArgv.imageConfig: the image the runner's own container was started from, whole.
+    assertEquals(
+        List.of("docker", "image", "inspect", "alpine:3"),
+        DockerArgv.imageInspect("docker", "alpine:3"));
+    assertThrows(IllegalArgumentException.class, () -> DockerArgv.imageInspect("docker", "-x"));
+    assertThrows(IllegalArgumentException.class, () -> DockerArgv.imageInspect("docker", "a\nb"));
+  }
+
+  @Test
+  public void updateRestartNoTakesTheRestartPolicyOff() {
+    // LifecycleArgv.noRestart: the retiring runner's own step out of the way of its successor.
+    assertEquals(
+        List.of("docker", "update", "--restart=no", "c"), DockerArgv.updateRestartNo("docker", "c"));
+    assertThrows(IllegalArgumentException.class, () -> DockerArgv.updateRestartNo("docker", "-x"));
+    assertThrows(IllegalArgumentException.class, () -> DockerArgv.updateRestartNo("docker", "a\nb"));
+  }
+
+  @Test
+  public void imagePruneDanglingIsTheSanctionedExceptionAndNeverCarriesAll() {
+    // DanglingImagesPass: the one sanctioned image prune in this file, and it can never widen to
+    // -a — only the dangling set, never every image no container happens to be using right now.
+    List<String> argv = DockerArgv.imagePruneDangling("docker");
+    assertEquals(List.of("docker", "image", "prune", "-f"), argv);
+    assertFalse(argv.contains("-a"), argv.toString());
+  }
 }

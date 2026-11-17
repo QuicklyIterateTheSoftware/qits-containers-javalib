@@ -33,11 +33,11 @@ import java.util.List;
  * with the options in the order the caller added them ({@link HostRunSpec} says why). Belted on the
  * way out: the name ({@link ContainersIdentifiers#requireReference docker's own name charset} — a
  * name like {@code qits-system-runner-7c1d2f0e-2026.1116.1} is not a DNS label), the image, every
- * network, mount, label key and value, environment key, user, group and working directory, the
- * restart policy, the capability, the resource bounds, the publish, every resolver ({@code --dns},
- * an IP literal) and every single-word value. The
- * environment values and the args are the caller's — masking a secret among them is the caller's
- * too, and nothing here logs an argv.
+ * network, mount, {@code --mount} value ({@link HostRunSpec.Kind#MOUNT}), label key and value,
+ * environment key, user, group and working directory, the restart policy, the capability, the
+ * resource bounds, the publish, every resolver ({@code --dns}, an IP literal) and every
+ * single-word value. The environment values and the args are the caller's — masking a secret
+ * among them is the caller's too, and nothing here logs an argv.
  */
 public final class HostRunArgv {
 
@@ -83,7 +83,7 @@ public final class HostRunArgv {
           pair(
               argv,
               "--label",
-              ContainersIdentifiers.requireExtraLabelKey(option.key())
+              HostArgvBelts.requireLabelKey(option.key())
                   + "="
                   + HostArgvBelts.requireNoControl("label value", value));
       case RESTART -> pair(argv, "--restart", HostArgvBelts.requireRestart(value));
@@ -96,6 +96,7 @@ public final class HostRunArgv {
       case CPUSET_CPUS -> pair(argv, "--cpuset-cpus", HostArgvBelts.requireCpuset(value));
       case OOM_SCORE_ADJ -> pair(argv, "--oom-score-adj", HostArgvBelts.requireOomScoreAdj(value));
       case VOLUME -> pair(argv, "-v", HostArgvBelts.requireMount(value));
+      case MOUNT -> pair(argv, "--mount", HostArgvBelts.requireMountSpec(value));
       case ENV ->
           pair(
               argv,
