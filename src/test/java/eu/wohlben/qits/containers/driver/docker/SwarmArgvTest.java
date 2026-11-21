@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import eu.wohlben.qits.containers.driver.swarm.ServiceSpec;
 import eu.wohlben.qits.containers.driver.swarm.ServiceUpdate;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -369,6 +370,34 @@ public class SwarmArgvTest {
         SwarmArgv.serviceInspect("docker", "dev-qits-gateway", "{{.ID}}"));
   }
 
+  @Test
+  public void serviceInspectReadsSeveralServicesInOneCall() {
+    assertEquals(
+        List.of(
+            "docker", "service", "inspect", "--format", "{{.Spec.Name}}",
+            "dev-qits-gateway", "dev-qits-ci"),
+        SwarmArgv.serviceInspect(
+            "docker", List.of("dev-qits-gateway", "dev-qits-ci"), "{{.Spec.Name}}"));
+    // A null format states none, as the single-service form does.
+    assertEquals(
+        List.of("docker", "service", "inspect", "dev-qits-gateway", "dev-qits-ci"),
+        SwarmArgv.serviceInspect("docker", List.of("dev-qits-gateway", "dev-qits-ci"), null));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> SwarmArgv.serviceInspect("docker", List.<String>of(), "{{.ID}}"));
+    assertThrows(
+        NullPointerException.class,
+        () -> SwarmArgv.serviceInspect("docker", (List<String>) null, "{{.ID}}"));
+    for (String hostile : new String[] {null, "", "a/b", "-x", "a b", "a\nb"}) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              SwarmArgv.serviceInspect(
+                  "docker", Arrays.asList("dev-qits-gateway", hostile), "{{.ID}}"),
+          String.valueOf(hostile));
+    }
+  }
+
   // --- qits-system-service's reads (qits-2211) -------------------------------------------------
   //
   // Copied from qits-system-service's DockerArgvTest (everyListAsksForOneJsonObjectPerLine,
@@ -595,7 +624,8 @@ public class SwarmArgvTest {
   @Test
   public void referencesAreRefusedOnlyWhenAbsent() {
     assertThrows(
-        NullPointerException.class, () -> SwarmArgv.serviceInspect("docker", null, "{{.ID}}"));
+        NullPointerException.class,
+        () -> SwarmArgv.serviceInspect("docker", (String) null, "{{.ID}}"));
     assertThrows(NullPointerException.class, () -> SwarmArgv.networkRm("docker", null));
     // A reference read off the daemon goes through as read: docker answers for it.
     assertEquals(

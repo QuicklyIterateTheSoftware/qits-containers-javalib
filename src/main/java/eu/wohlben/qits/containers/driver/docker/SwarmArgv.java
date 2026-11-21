@@ -252,6 +252,32 @@ public final class SwarmArgv {
   }
 
   /**
+   * {@code service inspect [--format <template>] <service>...} — several services in one docker
+   * call, the list read that would otherwise exec once per service. A null format states none, as
+   * the single-service form does; the caller passes a {@code --format} template to keep the output
+   * to what it needs — qits-system-service's secrets usage read, for one, prints only each
+   * service's name and its secret references, so no environment value ever reaches the process
+   * output. Each reference is belted ({@link ContainersIdentifiers#requireReference}); the list
+   * must be non-null and non-empty.
+   */
+  public static List<String> serviceInspect(
+      String runtimeBinary, List<String> services, String format) {
+    Objects.requireNonNull(services, "services");
+    if (services.isEmpty()) {
+      throw new IllegalArgumentException("Invalid service inspect: no service named");
+    }
+    List<String> argv = new ArrayList<>(List.of(runtimeBinary, "service", "inspect"));
+    if (format != null) {
+      argv.add("--format");
+      argv.add(format);
+    }
+    for (String service : services) {
+      argv.add(ContainersIdentifiers.requireReference("service", service));
+    }
+    return List.copyOf(argv);
+  }
+
+  /**
    * {@code service ps <service> (--filter F)* [--no-trunc] [--format <template>]}. A null format
    * states none — docker's own table, which is what a person reads.
    */
