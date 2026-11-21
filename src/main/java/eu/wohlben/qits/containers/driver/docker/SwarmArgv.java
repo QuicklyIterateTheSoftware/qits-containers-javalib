@@ -25,10 +25,14 @@ import java.util.Objects;
  * for why.
  *
  * <p><b>The operator's reads are the exception, and say so.</b> {@link #nodeInspect}, {@link
- * #nodePs}, {@link #configInspect} and the two-argument {@link #serviceInspect(String, String)}
- * take a reference a person typed into qits-system-service's console rather than one read off the
- * daemon, so they run {@link ContainersIdentifiers#requireReference} on it — that service's own
- * belt, lifted. Their flag order is that service's, as the deployer's is everywhere else here.
+ * #nodePs}, {@link #configInspect(String, String)} and the two-argument {@link
+ * #serviceInspect(String, String)} take a reference a person typed into qits-system-service's
+ * console rather than one read off the daemon, so they run {@link
+ * ContainersIdentifiers#requireReference} on it — that service's own belt, lifted. Their flag
+ * order is that service's, as the deployer's is everywhere else here. The list forms — {@link
+ * #serviceInspect(String, List, String)}, {@link #secretInspect(String, List, String)} and {@link
+ * #configInspect(String, List, String)} — belt every reference the same way, one docker call for
+ * several objects instead of one call per object.
  */
 public final class SwarmArgv {
 
@@ -438,6 +442,32 @@ public final class SwarmArgv {
   }
 
   /**
+   * {@code config inspect [--format <template>] <config>...} — several configs in one docker call,
+   * the list read that would otherwise exec once per config. A null format states none, as the
+   * single-config form does; the caller passes a {@code --format} template to keep the output to
+   * what it needs — qits-system-service's configs list read, for one, never asks for {@code
+   * .Spec.Data}, so no config's content ever reaches the process output (qits-2487). Each reference
+   * is belted ({@link ContainersIdentifiers#requireReference}); the list must be non-null and
+   * non-empty.
+   */
+  public static List<String> configInspect(
+      String runtimeBinary, List<String> configs, String format) {
+    Objects.requireNonNull(configs, "configs");
+    if (configs.isEmpty()) {
+      throw new IllegalArgumentException("Invalid config inspect: no config named");
+    }
+    List<String> argv = new ArrayList<>(List.of(runtimeBinary, "config", "inspect"));
+    if (format != null) {
+      argv.add("--format");
+      argv.add(format);
+    }
+    for (String config : configs) {
+      argv.add(ContainersIdentifiers.requireReference("config", config));
+    }
+    return List.copyOf(argv);
+  }
+
+  /**
    * {@code secret ls [--format <template>]}. A listing; a secret's value is something no docker
    * command prints anyway.
    */
@@ -454,6 +484,32 @@ public final class SwarmArgv {
   public static List<String> secretInspect(String runtimeBinary, String name) {
     return List.of(
         runtimeBinary, "secret", "inspect", ContainersIdentifiers.requireReference("secret", name));
+  }
+
+  /**
+   * {@code secret inspect [--format <template>] <secret>...} — several secrets in one docker call,
+   * the list read that would otherwise exec once per secret. A null format states none, as the
+   * single-secret form does; the caller passes a {@code --format} template to keep the output to
+   * what it needs — qits-system-service's secrets list read, for one, prints only each secret's
+   * name, so no secret's value ever reaches the process output (qits-2487). Each reference is
+   * belted ({@link ContainersIdentifiers#requireReference}); the list must be non-null and
+   * non-empty.
+   */
+  public static List<String> secretInspect(
+      String runtimeBinary, List<String> secrets, String format) {
+    Objects.requireNonNull(secrets, "secrets");
+    if (secrets.isEmpty()) {
+      throw new IllegalArgumentException("Invalid secret inspect: no secret named");
+    }
+    List<String> argv = new ArrayList<>(List.of(runtimeBinary, "secret", "inspect"));
+    if (format != null) {
+      argv.add("--format");
+      argv.add(format);
+    }
+    for (String secret : secrets) {
+      argv.add(ContainersIdentifiers.requireReference("secret", secret));
+    }
+    return List.copyOf(argv);
   }
 
   /**

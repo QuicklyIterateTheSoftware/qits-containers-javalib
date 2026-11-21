@@ -531,6 +531,70 @@ public class SwarmArgvTest {
   }
 
   @Test
+  public void secretInspectReadsSeveralSecretsInOneCall() {
+    assertEquals(
+        List.of(
+            "docker", "secret", "inspect", "--format", "{{.Spec.Name}}",
+            "qits-dns-hetzner-token-0a1b2c3d4e5f", "qits-other-secret"),
+        SwarmArgv.secretInspect(
+            "docker",
+            List.of("qits-dns-hetzner-token-0a1b2c3d4e5f", "qits-other-secret"),
+            "{{.Spec.Name}}"));
+    // A null format states none, as the single-secret form does.
+    assertEquals(
+        List.of(
+            "docker", "secret", "inspect",
+            "qits-dns-hetzner-token-0a1b2c3d4e5f", "qits-other-secret"),
+        SwarmArgv.secretInspect(
+            "docker", List.of("qits-dns-hetzner-token-0a1b2c3d4e5f", "qits-other-secret"), null));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> SwarmArgv.secretInspect("docker", List.<String>of(), "{{.ID}}"));
+    assertThrows(
+        NullPointerException.class,
+        () -> SwarmArgv.secretInspect("docker", (List<String>) null, "{{.ID}}"));
+    for (String hostile : new String[] {null, "", "a/b", "-x", "a b", "a\nb"}) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              SwarmArgv.secretInspect(
+                  "docker",
+                  Arrays.asList("qits-dns-hetzner-token-0a1b2c3d4e5f", hostile),
+                  "{{.ID}}"),
+          String.valueOf(hostile));
+    }
+  }
+
+  @Test
+  public void configInspectReadsSeveralConfigsInOneCall() {
+    assertEquals(
+        List.of(
+            "docker", "config", "inspect", "--format", "{{.Spec.Name}}",
+            "qits-haproxy-config", "qits-other-config"),
+        SwarmArgv.configInspect(
+            "docker", List.of("qits-haproxy-config", "qits-other-config"), "{{.Spec.Name}}"));
+    // A null format states none, as the single-config form does.
+    assertEquals(
+        List.of("docker", "config", "inspect", "qits-haproxy-config", "qits-other-config"),
+        SwarmArgv.configInspect(
+            "docker", List.of("qits-haproxy-config", "qits-other-config"), null));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> SwarmArgv.configInspect("docker", List.<String>of(), "{{.ID}}"));
+    assertThrows(
+        NullPointerException.class,
+        () -> SwarmArgv.configInspect("docker", (List<String>) null, "{{.ID}}"));
+    for (String hostile : new String[] {null, "", "a/b", "-x", "a b", "a\nb"}) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              SwarmArgv.configInspect(
+                  "docker", Arrays.asList("qits-haproxy-config", hostile), "{{.ID}}"),
+          String.valueOf(hostile));
+    }
+  }
+
+  @Test
   public void theBootstrapSecretCommandsAreTheClisElementForElement() {
     // SeedPhases :4256, :4268 and :4274.
     assertEquals(
