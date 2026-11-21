@@ -491,7 +491,7 @@ public final class SwarmArgv {
    * the list read that would otherwise exec once per secret. A null format states none, as the
    * single-secret form does; the caller passes a {@code --format} template to keep the output to
    * what it needs — qits-system-service's secrets list read, for one, prints only each secret's
-   * name, so no secret's value ever reaches the process output (qits-2487). Each reference is
+   * list row: id, name, driver, dates and labels (qits-2487). Each reference is
    * belted ({@link ContainersIdentifiers#requireReference}); the list must be non-null and
    * non-empty.
    */
