@@ -454,6 +454,29 @@ public class SwarmArgvTest {
     }
   }
 
+  @Test
+  public void nodePsListsTheTasksSwarmPlacedOnOneNodeAndBeltsTheReference() {
+    assertEquals(
+        List.of("docker", "node", "ps", "abc"), SwarmArgv.nodePs("docker", "abc", false, null));
+    assertEquals(
+        List.of("docker", "node", "ps", "--no-trunc", "abc"),
+        SwarmArgv.nodePs("docker", "abc", true, null));
+    assertEquals(
+        List.of("docker", "node", "ps", "--format", "{{.ID}}", "abc"),
+        SwarmArgv.nodePs("docker", "abc", false, "{{.ID}}"));
+    assertEquals(
+        List.of("docker", "node", "ps", "--no-trunc", "--format", "{{.ID}}", "abc"),
+        SwarmArgv.nodePs("docker", "abc", true, "{{.ID}}"));
+    assertEquals(
+        List.of("docker", "node", "ps", "abc"), SwarmArgv.nodePs("docker", "abc", false, ""));
+    for (String hostile : new String[] {null, "", "a/b", "-x", "a b", "a\nb"}) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> SwarmArgv.nodePs("docker", hostile, false, null),
+          String.valueOf(hostile));
+    }
+  }
+
   // --- qits-bootstrap-cli's (qits-2212) -------------------------------------------------------
   //
   // Copied from that program's DockerStackTest and DockerNetworkTest where they pin the argv, and

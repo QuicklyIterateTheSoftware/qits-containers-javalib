@@ -25,10 +25,10 @@ import java.util.Objects;
  * for why.
  *
  * <p><b>The operator's reads are the exception, and say so.</b> {@link #nodeInspect}, {@link
- * #configInspect} and the two-argument {@link #serviceInspect(String, String)} take a reference a
- * person typed into qits-system-service's console rather than one read off the daemon, so they run
- * {@link ContainersIdentifiers#requireReference} on it — that service's own belt, lifted. Their
- * flag order is that service's, as the deployer's is everywhere else here.
+ * #nodePs}, {@link #configInspect} and the two-argument {@link #serviceInspect(String, String)}
+ * take a reference a person typed into qits-system-service's console rather than one read off the
+ * daemon, so they run {@link ContainersIdentifiers#requireReference} on it — that service's own
+ * belt, lifted. Their flag order is that service's, as the deployer's is everywhere else here.
  */
 public final class SwarmArgv {
 
@@ -400,6 +400,25 @@ public final class SwarmArgv {
   public static List<String> nodeInspect(String runtimeBinary, String reference) {
     return List.of(
         runtimeBinary, "node", "inspect", ContainersIdentifiers.requireReference("node", reference));
+  }
+
+  /**
+   * {@code node ps [--no-trunc] [--format <template>] <reference>} — the tasks swarm placed on one
+   * node, history included, answerable by the manager for every node; the reference is belted. A
+   * null or blank format states none — docker's own table, which is what a person reads.
+   */
+  public static List<String> nodePs(
+      String runtimeBinary, String reference, boolean noTrunc, String format) {
+    List<String> argv = new ArrayList<>(List.of(runtimeBinary, "node", "ps"));
+    if (noTrunc) {
+      argv.add("--no-trunc");
+    }
+    if (format != null && !format.isBlank()) {
+      argv.add("--format");
+      argv.add(format);
+    }
+    argv.add(ContainersIdentifiers.requireReference("node", reference));
+    return List.copyOf(argv);
   }
 
   /** {@code config ls [--format <template>]}. */
