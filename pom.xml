@@ -23,7 +23,7 @@
          <repositories> block). -->
     <groupId>eu.wohlben.qits</groupId>
     <artifactId>qits-containers-driver</artifactId>
-    <version>2026.1117.172545</version>
+    <version>2026.1121.13137</version>
     <packaging>jar</packaging>
     <name>qits-containers-driver</name>
 
