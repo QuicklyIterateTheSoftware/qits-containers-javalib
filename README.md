@@ -187,6 +187,10 @@ toolkit rendered them by hand:
   `imageInspect(binary, image)` (no template), `updateRestartNo` (`update --restart=no`) and
   `imagePruneDangling` (`image prune -f`, never `-a`: the one sanctioned prune, an embedder's
   dangling-only pass; the service's own collection still decides image by image).
+- **`DockerArgv.updateMemory`** (`update --memory <m> --memory-swap <s> <reference>`, qits-2565):
+  qits-system-runner-daemon's in-place raise of a kept buildkitd's memory cap (qits-2503). Both
+  flags are always given; a non-positive memory and a swap below the memory other than `-1` are
+  refused.
 - **`HostRunSpec.Builder.mount`** (`--mount <spec>`, verbatim, belted free of control characters
   and a leading `-`) carries a running container's `HostConfig.Mounts` into its successor.
 - **`HostRunArgv` belts widened, never narrowed**: a label key may carry `/` (a label docker already

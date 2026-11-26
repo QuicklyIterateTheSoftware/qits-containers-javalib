@@ -675,6 +675,41 @@ public final class DockerArgv {
         runtimeBinary, "update", "--restart=no", ContainersIdentifiers.requireReference(reference));
   }
 
+  /**
+   * {@code update --memory <memoryBytes> --memory-swap <memorySwapBytes> <reference>} — change a
+   * running container's memory cap in place. qits-system-runner-daemon's {@code
+   * BuildPlane.raiseInPlace} (qits-2503, qits-2565): a kept buildkitd whose cap is below the
+   * configured one is raised without a restart, so the builds it holds survive.
+   *
+   * <p>Both flags are always given: docker refuses a {@code --memory} above the container's current
+   * memory+swap limit unless {@code --memory-swap} comes with it, so a swap-less raise would fail
+   * on exactly the containers that need it. The memory must be positive; the swap must be {@code
+   * -1} (unlimited) or at least the memory — docker's own rule, refused here rather than at the
+   * daemon.
+   */
+  public static List<String> updateMemory(
+      String runtimeBinary, String reference, long memoryBytes, long memorySwapBytes) {
+    if (memoryBytes <= 0) {
+      throw new IllegalArgumentException("Invalid memory: " + memoryBytes + " bytes");
+    }
+    if (memorySwapBytes != -1 && memorySwapBytes < memoryBytes) {
+      throw new IllegalArgumentException(
+          "Invalid memory swap: "
+              + memorySwapBytes
+              + " bytes, below the memory of "
+              + memoryBytes
+              + " bytes");
+    }
+    return List.of(
+        runtimeBinary,
+        "update",
+        "--memory",
+        String.valueOf(memoryBytes),
+        "--memory-swap",
+        String.valueOf(memorySwapBytes),
+        ContainersIdentifiers.requireReference(reference));
+  }
+
   /** Remove it, running or not. Every teardown ends here, and never at a {@code --rm}. */
   public static List<String> rm(String runtimeBinary, String name) {
     return List.of(runtimeBinary, "rm", "-f", ContainersIdentifiers.requireContainerName(name));

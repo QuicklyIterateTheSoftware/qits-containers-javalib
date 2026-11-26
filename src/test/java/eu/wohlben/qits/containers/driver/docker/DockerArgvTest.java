@@ -1567,6 +1567,46 @@ public class DockerArgvTest {
   }
 
   @Test
+  public void updateMemoryRaisesTheCapAndSwapInPlace() {
+    // qits-system-runner-daemon BuildPlane.raiseInPlace (qits-2503): copied from that runner's
+    // BuildPlaneTest.aKeptStaleBuilderUnderALowerCapGetsTheConfiguredOneInPlace.
+    assertEquals(
+        List.of(
+            "docker",
+            "update",
+            "--memory",
+            "8589934592",
+            "--memory-swap",
+            "17179869184",
+            "qits-buildkitd"),
+        DockerArgv.updateMemory("docker", "qits-buildkitd", 8589934592L, 17179869184L));
+    // -1 is docker's unlimited swap; a swap equal to the memory is "no swap" and allowed.
+    assertEquals(
+        List.of("docker", "update", "--memory", "1024", "--memory-swap", "-1", "c"),
+        DockerArgv.updateMemory("docker", "c", 1024, -1));
+    assertEquals(
+        List.of("docker", "update", "--memory", "1024", "--memory-swap", "1024", "c"),
+        DockerArgv.updateMemory("docker", "c", 1024, 1024));
+
+    assertThrows(
+        IllegalArgumentException.class, () -> DockerArgv.updateMemory("docker", "c", 0, 1024));
+    assertThrows(
+        IllegalArgumentException.class, () -> DockerArgv.updateMemory("docker", "c", -1, -1));
+    assertThrows(
+        IllegalArgumentException.class, () -> DockerArgv.updateMemory("docker", "c", 1024, 1023));
+    assertThrows(
+        IllegalArgumentException.class, () -> DockerArgv.updateMemory("docker", "c", 1024, 0));
+    assertThrows(
+        IllegalArgumentException.class, () -> DockerArgv.updateMemory("docker", "c", 1024, -2));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> DockerArgv.updateMemory("docker", "-x", 1024, 2048));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> DockerArgv.updateMemory("docker", "a\nb", 1024, 2048));
+  }
+
+  @Test
   public void imagePruneDanglingIsTheSanctionedExceptionAndNeverCarriesAll() {
     // DanglingImagesPass: the one sanctioned image prune in this file, and it can never widen to
     // -a — only the dangling set, never every image no container happens to be using right now.
